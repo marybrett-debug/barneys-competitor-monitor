@@ -12,9 +12,10 @@
   }
   *{box-sizing:border-box}
   body{font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:var(--ink);margin:0;background:var(--bg)}
-  header{background:linear-gradient(135deg,var(--orange-dark),var(--yellow));padding:22px 28px;color:#fff}
-  header h1{margin:0;font-size:22px}
-  header p{margin:4px 0 0;opacity:.9;font-size:13px}
+  header{background:#000;padding:18px 28px;color:#fff;display:flex;align-items:center;gap:20px}
+  header img.logo{height:44px;width:auto;display:none}
+  header .brand h1{margin:0;font-size:22px;font-weight:800;letter-spacing:.5px}
+  header .brand p{margin:3px 0 0;opacity:.75;font-size:13px;color:#FFC93C}
   .wrap{max-width:1080px;margin:0 auto;padding:24px 28px}
   .card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-bottom:22px}
   .card h2{font-size:15px;margin:0 0 12px;color:#555}
@@ -49,8 +50,12 @@
 </head>
 <body>
 <header>
-  <h1>📊 Promo &amp; Sales Dashboard</h1>
-  <p>Barney's Farm · which promos drove revenue · Higher and Higher</p>
+  <img class="logo" id="brandLogo" src="logo.png" alt="Barney's Farm"
+       onload="this.style.display='block'; document.getElementById('brandText').style.display='none';"/>
+  <div class="brand" id="brandText">
+    <h1>BARNEY'S FARM</h1>
+    <p>Promo &amp; Sales Intelligence · Higher and Higher</p>
+  </div>
 </header>
 
 <div class="wrap">
