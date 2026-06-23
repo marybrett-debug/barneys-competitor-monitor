@@ -82,9 +82,11 @@ def build_slack_payload():
     for name in ["ILGM", "Royal Queen Seeds", "Sensi Seeds", "Seedsman"]:
         blocks += _competitor_section(name)
 
-    # New product launches this week
+    # New product launches — disabled in report (mostly re-indexed pages, not
+    # real launches). Data still collected in product_listings. Flip to re-enable.
+    SHOW_LAUNCHES = False
     try:
-        launches = db.new_products_since(week_ago)
+        launches = db.new_products_since(week_ago) if SHOW_LAUNCHES else []
     except Exception:
         launches = []
     if launches:

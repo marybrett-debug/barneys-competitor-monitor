@@ -138,39 +138,61 @@ function render(data){
   const labels = sales.map(s=>dayOf(s.sale_date));
   const revenue = sales.map(s=>s.revenue==null?null:Number(s.revenue));
 
-  // Build promo bands from consecutive sales days sharing the same note.
-  const bands = [];
-  let cur = null;
-  sales.forEach(s=>{
-    const note = (s.note||"").trim();
-    const day = dayOf(s.sale_date);
-    if(note){
-      if(cur && cur.note===note){ cur.end = day; }
-      else { if(cur) bands.push(cur); cur = {note, start:day, end:day}; }
-    } else {
-      if(cur){ bands.push(cur); cur = null; }
-    }
-  });
-  if(cur) bands.push(cur);
+  // Build promo bands. Prefer the historical promos table (named windows with
+  // explicit start/end); fall back to consecutive sales-note days if none exist.
+  const promos = data.promos||[];
+  let bands = [];
+  if(promos.length){
+    bands = promos.map(p=>({
+      note: p.promo_name + (p.discount ? ` (${p.discount})` : ""),
+      start: dayOf(p.start_date),
+      end: dayOf(p.end_date || p.start_date)
+    }));
+  } else {
+    let cur = null;
+    sales.forEach(s=>{
+      const note = (s.note||"").trim();
+      const day = dayOf(s.sale_date);
+      if(note){
+        if(cur && cur.note===note){ cur.end = day; }
+        else { if(cur) bands.push(cur); cur = {note, start:day, end:day}; }
+      } else {
+        if(cur){ bands.push(cur); cur = null; }
+      }
+    });
+    if(cur) bands.push(cur);
+  }
 
   // a palette of soft fills cycled across distinct promo notes
   const palette = ["rgba(27,94,32,.12)","rgba(255,140,66,.16)",
-                   "rgba(66,135,245,.12)","rgba(186,104,200,.14)"];
+                   "rgba(66,135,245,.12)","rgba(186,104,200,.14)",
+                   "rgba(244,67,54,.10)","rgba(0,150,136,.12)"];
   const noteColors = {};
   let ci = 0;
   bands.forEach(b=>{ if(!(b.note in noteColors)){ noteColors[b.note]=palette[ci%palette.length]; ci++; } });
 
   // vertical marker lines for promo changes (only those within sales date range)
   const labelSet = new Set(labels);
+  const firstDay = labels[0], lastDay = labels[labels.length-1];
+
+  // clamp a band's start/end to the visible sales date range so partial-overlap draws
+  function clampDay(d){
+    if(!labels.length) return null;
+    if(d < firstDay) return firstDay;
+    if(d > lastDay) return lastDay;
+    return d;
+  }
 
   const bandPlugin = {
     id:"promobands",
     beforeDatasetsDraw(chart){
       const {ctx, chartArea:{top,bottom}, scales:{x}} = chart;
       bands.forEach(b=>{
-        if(!labelSet.has(b.start) && !labelSet.has(b.end)) return;
-        const x1 = x.getPixelForValue(b.start);
-        const x2 = x.getPixelForValue(b.end);
+        // skip bands entirely outside the visible window
+        if(b.end < firstDay || b.start > lastDay) return;
+        const s = clampDay(b.start), e = clampDay(b.end);
+        const x1 = x.getPixelForValue(s);
+        const x2 = x.getPixelForValue(e);
         const pad = (x.getPixelForValue(labels[1]) - x.getPixelForValue(labels[0]))/2 || 4;
         ctx.save();
         ctx.fillStyle = noteColors[b.note];
@@ -301,9 +323,12 @@ function render(data){
     });
   }
 
-  // ---- launches table ----
+  // ---- launches table (hidden from dashboard; data still collected in DB) ----
+  // The product-launch scrape mostly catches re-indexed pages, not real launches,
+  // so it's hidden here. Data still lands in product_listings if ever needed.
+  const SHOW_LAUNCHES = false;
   const launches = data.launches||[];
-  if(launches.length){
+  if(SHOW_LAUNCHES && launches.length){
     document.getElementById("launchCard").style.display="block";
     const ltb = document.querySelector("#launchTable tbody");
     launches.forEach(l=>{

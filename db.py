@@ -256,3 +256,46 @@ def latest_prices_by_strain():
             ORDER BY strain, competitor, observed_at DESC
         """)
         return cur.fetchall()
+
+
+# ---- Our own historical promo windows (manual CSV import) -------------------
+
+def init_promo_schema():
+    """Barney's Farm historical promo windows — drawn as bands on the dashboard.
+    Keyed by (start_date, promo_name) so re-importing updates rather than dupes."""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS barneys_promos (
+                id          SERIAL PRIMARY KEY,
+                start_date  DATE NOT NULL,
+                end_date    DATE,
+                promo_name  TEXT NOT NULL,
+                discount    TEXT,
+                notes       TEXT,
+                UNIQUE (start_date, promo_name)
+            );
+        """)
+        conn.commit()
+
+
+def upsert_barneys_promo(start_date, end_date, promo_name, discount=None, notes=None):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO barneys_promos (start_date, end_date, promo_name, discount, notes)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (start_date, promo_name) DO UPDATE SET
+                end_date = EXCLUDED.end_date,
+                discount = EXCLUDED.discount,
+                notes    = EXCLUDED.notes
+        """, (start_date, end_date, promo_name, discount, notes))
+        conn.commit()
+
+
+def all_barneys_promos():
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT start_date, end_date, promo_name, discount, notes
+            FROM barneys_promos
+            ORDER BY start_date ASC
+        """)
+        return cur.fetchall()

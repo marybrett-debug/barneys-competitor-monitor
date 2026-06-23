@@ -99,8 +99,19 @@ def fetch_payload(days=120):
         except Exception:
             prices = []
 
+        # our own historical promo windows (for chart bands)
+        try:
+            cur.execute("""
+                SELECT start_date, end_date, promo_name, discount, notes
+                FROM barneys_promos
+                ORDER BY start_date ASC
+            """)
+            promos = _serialize(cur.fetchall())
+        except Exception:
+            promos = []
+
     return {"sales": sales, "snapshots": snapshots,
-            "launches": launches, "prices": prices}
+            "launches": launches, "prices": prices, "promos": promos}
 
 
 class handler(BaseHTTPRequestHandler):
