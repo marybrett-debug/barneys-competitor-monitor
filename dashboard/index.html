@@ -279,7 +279,9 @@ function renderPerf(){
     const w = lift==null?0:Math.min(100, Math.abs(lift)/maxAbs*100);
     const neg = lift!=null && lift<0;
     const val = lift==null?"n/a":(lift>0?"+":"")+lift+"%";
-    const tip = `${p.during_avg?fmtK(p.during_avg):"—"}/day during vs ${p.baseline_avg?fmtK(p.baseline_avg):"—"}/day baseline · ${p.days} days · ${fmtK(p.total_revenue)} total`;
+    const bdays = p.baseline_days!=null ? p.baseline_days : "?";
+    const thin = (p.baseline_days!=null && p.baseline_days < 5) ? " ⚠ thin baseline" : "";
+    const tip = `${p.during_avg?fmtK(p.during_avg):"—"}/day during (${p.days} days) vs ${p.baseline_avg?fmtK(p.baseline_avg):"—"}/day baseline (${bdays} clean days)${thin} · ${fmtK(p.total_revenue)} total`;
     const pill = p.is_major===false?'<span class=pill>minor</span>':'';
     return `<div class="bar-row" title="${tip}">
       <div class="nm">${p.promo_name}${pill}</div>

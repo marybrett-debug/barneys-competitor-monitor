@@ -119,9 +119,10 @@ def fetch_payload(days=800):
 
 
 def _compute_performance(sales, promos):
-    """For each promo, average daily revenue during the window vs a baseline
-    (the 14 days before + 14 days after, excluding other-promo days is skipped
-    for simplicity). Returns list ranked by lift % descending."""
+    """For each promo, average daily revenue during the window vs a clean
+    baseline: the 14 days before + 14 days after, EXCLUDING any day that falls
+    inside another promo window (so overlapping sales don't inflate the baseline).
+    Returns list ranked by lift % descending."""
     from datetime import date as _date, timedelta as _td
 
     def parse(d):
@@ -137,6 +138,21 @@ def _compute_performance(sales, promos):
         if d and s.get("revenue") is not None:
             rev[d] = float(s["revenue"])
 
+    # build list of all promo (start,end) ranges for exclusion checks
+    ranges = []
+    for p in promos:
+        ps, pe = parse(p.get("start_date", "")), parse(p.get("end_date", ""))
+        if ps:
+            ranges.append((ps, pe or ps))
+
+    def in_any_other_promo(day, my_start, my_end):
+        for (rs, re_) in ranges:
+            if rs == my_start and re_ == my_end:
+                continue  # skip the promo we're measuring
+            if rs <= day <= re_:
+                return True
+        return False
+
     out = []
     for p in promos:
         start = parse(p.get("start_date", ""))
@@ -146,11 +162,13 @@ def _compute_performance(sales, promos):
         during = [rev[d] for d in rev if start <= d <= end]
         if not during:
             continue
-        # baseline: 14 days before start and 14 days after end
+        # baseline: 14 days before start + 14 days after end, excluding days
+        # that fall inside any OTHER promo window
         b_start = start - _td(days=14)
         b_end = end + _td(days=14)
         baseline = [rev[d] for d in rev
-                    if (b_start <= d < start) or (end < d <= b_end)]
+                    if ((b_start <= d < start) or (end < d <= b_end))
+                    and not in_any_other_promo(d, start, end)]
         during_avg = sum(during) / len(during)
         base_avg = (sum(baseline) / len(baseline)) if baseline else None
         lift = ((during_avg - base_avg) / base_avg * 100) if base_avg else None
@@ -161,6 +179,7 @@ def _compute_performance(sales, promos):
             "end_date": p.get("end_date"),
             "is_major": p.get("is_major"),
             "days": len(during),
+            "baseline_days": len(baseline),
             "during_avg": round(during_avg, 2),
             "baseline_avg": round(base_avg, 2) if base_avg is not None else None,
             "lift_pct": round(lift, 1) if lift is not None else None,
