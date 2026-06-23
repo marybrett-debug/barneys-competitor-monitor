@@ -113,9 +113,70 @@ def fetch_payload(days=800):
     # ---- promo performance: avg daily revenue during vs baseline around it ----
     performance = _compute_performance(sales, promos)
 
+    # ---- monthly year-over-year comparison ----
+    monthly = _compute_monthly(sales, promos)
+
     return {"sales": sales, "snapshots": snapshots,
             "launches": launches, "prices": prices,
-            "promos": promos, "performance": performance}
+            "promos": promos, "performance": performance,
+            "monthly": monthly}
+
+
+def _compute_monthly(sales, promos):
+    """Aggregate revenue/orders by calendar month and attach the promo(s) that
+    ran in that month. Returns {year: {month(1-12): {...}}} plus the year list."""
+    from datetime import date as _date
+
+    def parse(d):
+        try:
+            return _date.fromisoformat(d[:10])
+        except Exception:
+            return None
+
+    data = {}  # year -> month -> {rev, orders, days}
+    for s in sales:
+        d = parse(s.get("sale_date", ""))
+        if not d:
+            continue
+        y, m = d.year, d.month
+        cell = data.setdefault(y, {}).setdefault(m, {"rev": 0.0, "orders": 0, "days": 0})
+        cell["rev"] += float(s["revenue"]) if s.get("revenue") is not None else 0.0
+        cell["orders"] += int(s["orders"]) if s.get("orders") is not None else 0
+        cell["days"] += 1
+
+    # attach promos: a promo belongs to a month if its window overlaps it
+    promo_by_ym = {}  # (year,month) -> set of names
+    for p in promos:
+        ps, pe = parse(p.get("start_date", "")), parse(p.get("end_date", ""))
+        if not ps:
+            continue
+        pe = pe or ps
+        # walk each month the promo touches
+        y, m = ps.year, ps.month
+        while (y < pe.year) or (y == pe.year and m <= pe.month):
+            label = p.get("promo_name", "")
+            if p.get("discount"):
+                label += f" ({p['discount']})"
+            promo_by_ym.setdefault((y, m), []).append(label)
+            m += 1
+            if m > 12:
+                m = 1
+                y += 1
+
+    years = sorted(data.keys())
+    months = {}
+    for m in range(1, 13):
+        months[m] = {}
+        for y in years:
+            cell = data.get(y, {}).get(m)
+            if cell:
+                months[m][y] = {
+                    "revenue": round(cell["rev"], 2),
+                    "orders": cell["orders"],
+                    "days": cell["days"],
+                    "promos": promo_by_ym.get((y, m), []),
+                }
+    return {"years": years, "months": months}
 
 
 def _compute_performance(sales, promos):

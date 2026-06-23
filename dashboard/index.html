@@ -95,6 +95,15 @@
     </div>
   </div>
 
+  <div class="card" id="monthlyCard" style="display:none">
+    <h2>Month-by-month: year-over-year</h2>
+    <table id="monthlyTable">
+      <thead><tr id="monthlyHead"><th>Month</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="legend">Revenue total per month with the promo(s) that ran. <b>YoY</b> = change vs the prior year's same month. Months with no sales data are blank.</div>
+  </div>
+
   <div class="card" id="priceCard" style="display:none">
     <h2>Head-to-head strain prices (latest)</h2>
     <table id="priceTable"><thead><tr id="priceHead"><th>Strain</th></tr></thead><tbody></tbody></table>
@@ -291,6 +300,45 @@ function renderPerf(){
   }).join("");
 }
 
+function renderMonthly(){
+  const md = DATA.monthly;
+  if(!md || !md.years || !md.years.length) return;
+  document.getElementById("monthlyCard").style.display="block";
+  const years = md.years;
+  const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  // header: Month | <year rev+promo> for each year | YoY (last two years)
+  const head=document.getElementById("monthlyHead");
+  years.forEach(y=> head.insertAdjacentHTML("beforeend",`<th>${y}</th>`));
+  if(years.length>=2) head.insertAdjacentHTML("beforeend",`<th>YoY</th>`);
+
+  const tb=document.querySelector("#monthlyTable tbody");
+  for(let m=1;m<=12;m++){
+    const row = md.months[m] || {};
+    // skip months with no data in any year
+    if(!years.some(y=>row[y])) continue;
+    let tds=`<td><b>${monthNames[m-1]}</b></td>`;
+    years.forEach(y=>{
+      const c=row[y];
+      if(!c){ tds+=`<td class=muted>—</td>`; return; }
+      const promo = c.promos && c.promos.length ? c.promos.join("; ") : "—";
+      tds+=`<td><b>${fmtK(c.revenue)}</b><div class=muted style="font-size:11px">${c.orders} orders · ${c.days} days</div>`+
+           `<div style="font-size:11px;color:var(--green)">${promo}</div></td>`;
+    });
+    if(years.length>=2){
+      const a=row[years[years.length-2]], b=row[years[years.length-1]];
+      if(a && b && a.revenue>0){
+        const pct=Math.round((b.revenue-a.revenue)/a.revenue*100);
+        const col = pct>=0?"var(--green)":"#d9534f";
+        tds+=`<td style="font-weight:700;color:${col}">${pct>=0?"+":""}${pct}%</td>`;
+      } else {
+        tds+=`<td class=muted>—</td>`;
+      }
+    }
+    tb.insertAdjacentHTML("beforeend",`<tr>${tds}</tr>`);
+  }
+}
+
 function renderStatic(){
   // price matrix
   const prices=DATA.prices||[];
@@ -413,6 +461,7 @@ function render(data){
   wireControls();
   renderPerf();
   renderChart();
+  renderMonthly();
   renderStatic();
 }
 
