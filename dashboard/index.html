@@ -90,8 +90,8 @@
     <canvas id="chart" height="120"></canvas>
     <div id="promoLegend" class="promo-legend"></div>
     <div class="legend">
-      Shaded bands = your promo windows (major campaigns colored; minor strain promos in grey).
-      Dashed lines = competitor promo changes. Hover for figures.
+      Shaded bands = your promo windows. Dashed lines = competitor promo changes.
+      Hover any point to see the promo running and the day's figures.
     </div>
   </div>
 
@@ -266,15 +266,8 @@ function renderChart(){
     plugins:[bandPlugin, markerPlugin]
   });
 
-  // legend: major campaigns only (the colored ones)
-  const pl=document.getElementById("promoLegend");
-  const fmt=d=>{ const [y,m,da]=d.split("-"); return `${m}/${da}/${y.slice(2)}`; };
-  const majorBands=bands.filter(b=>b.major && (b.end>=firstDay && b.start<=lastDay));
-  pl.innerHTML = majorBands.map(b=>
-    `<div class="item"><span class="sw" style="background:${bandFill(b)};border-color:${majorColors[b.note]||'#ccc'}"></span>`+
-    `<span>${b.note}</span> <span class="rng">${fmt(b.start)}–${fmt(b.end)}</span></div>`
-  ).join("") + (bands.some(b=>!b.major)?
-    `<div class="item"><span class="sw" style="background:${MINOR}"></span><span class=muted>minor strain promos</span></div>`:"");
+  // legend list removed per request — bands + hover tooltips remain on the chart
+  document.getElementById("promoLegend").innerHTML = "";
 }
 
 function renderPerf(){
