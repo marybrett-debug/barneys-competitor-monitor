@@ -50,7 +50,7 @@ def _serialize(rows):
     return out
 
 
-def fetch_payload(days=120):
+def fetch_payload(days=800):
     start = (datetime.now(timezone.utc) - timedelta(days=days))
     start_iso = start.isoformat()
     start_date = start.date().isoformat()
@@ -102,7 +102,7 @@ def fetch_payload(days=120):
         # our own historical promo windows (for chart bands)
         try:
             cur.execute("""
-                SELECT start_date, end_date, promo_name, discount, notes
+                SELECT start_date, end_date, promo_name, discount, notes, is_major
                 FROM barneys_promos
                 ORDER BY start_date ASC
             """)
@@ -110,8 +110,65 @@ def fetch_payload(days=120):
         except Exception:
             promos = []
 
+    # ---- promo performance: avg daily revenue during vs baseline around it ----
+    performance = _compute_performance(sales, promos)
+
     return {"sales": sales, "snapshots": snapshots,
-            "launches": launches, "prices": prices, "promos": promos}
+            "launches": launches, "prices": prices,
+            "promos": promos, "performance": performance}
+
+
+def _compute_performance(sales, promos):
+    """For each promo, average daily revenue during the window vs a baseline
+    (the 14 days before + 14 days after, excluding other-promo days is skipped
+    for simplicity). Returns list ranked by lift % descending."""
+    from datetime import date as _date, timedelta as _td
+
+    def parse(d):
+        try:
+            return _date.fromisoformat(d[:10])
+        except Exception:
+            return None
+
+    # map date -> revenue
+    rev = {}
+    for s in sales:
+        d = parse(s.get("sale_date", ""))
+        if d and s.get("revenue") is not None:
+            rev[d] = float(s["revenue"])
+
+    out = []
+    for p in promos:
+        start = parse(p.get("start_date", ""))
+        end = parse(p.get("end_date", "")) or start
+        if not start:
+            continue
+        during = [rev[d] for d in rev if start <= d <= end]
+        if not during:
+            continue
+        # baseline: 14 days before start and 14 days after end
+        b_start = start - _td(days=14)
+        b_end = end + _td(days=14)
+        baseline = [rev[d] for d in rev
+                    if (b_start <= d < start) or (end < d <= b_end)]
+        during_avg = sum(during) / len(during)
+        base_avg = (sum(baseline) / len(baseline)) if baseline else None
+        lift = ((during_avg - base_avg) / base_avg * 100) if base_avg else None
+        out.append({
+            "promo_name": p.get("promo_name"),
+            "discount": p.get("discount"),
+            "start_date": p.get("start_date"),
+            "end_date": p.get("end_date"),
+            "is_major": p.get("is_major"),
+            "days": len(during),
+            "during_avg": round(during_avg, 2),
+            "baseline_avg": round(base_avg, 2) if base_avg is not None else None,
+            "lift_pct": round(lift, 1) if lift is not None else None,
+            "total_revenue": round(sum(during), 2),
+        })
+    # rank by lift desc, putting None lifts last
+    out.sort(key=lambda x: (x["lift_pct"] is None, -(x["lift_pct"] or 0)))
+    return out
 
 
 class handler(BaseHTTPRequestHandler):

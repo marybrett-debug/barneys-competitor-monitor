@@ -22,6 +22,21 @@ from datetime import datetime
 import db
 
 
+def _is_major(name, explicit):
+    """Decide if a promo is a 'major' campaign (distinct band color) vs a minor
+    one-week strain promo (grouped muted color). Explicit CSV value wins."""
+    if explicit:
+        e = explicit.strip().lower()
+        if e in ("yes", "true", "1", "major", "y"):
+            return True
+        if e in ("no", "false", "0", "minor", "n"):
+            return False
+    n = (name or "").lower()
+    minor_signals = ["strain of the week", "strain of the month",
+                     "sow", "som", "sotw", "strain-promo", "strain promo"]
+    return not any(s in n for s in minor_signals)
+
+
 def import_csv(path):
     db.init_promo_schema()
     n, skipped = 0, 0
@@ -50,6 +65,7 @@ def import_csv(path):
                 start_date=start, end_date=end, promo_name=name,
                 discount=row.get("discount") or None,
                 notes=row.get("notes") or None,
+                is_major=_is_major(name, row.get("is_major", "")),
             )
             n += 1
     print(f"Imported/updated {n} promos (skipped {skipped}).")

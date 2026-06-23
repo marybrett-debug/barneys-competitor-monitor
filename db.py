@@ -272,29 +272,34 @@ def init_promo_schema():
                 promo_name  TEXT NOT NULL,
                 discount    TEXT,
                 notes       TEXT,
+                is_major    BOOLEAN DEFAULT TRUE,
                 UNIQUE (start_date, promo_name)
             );
         """)
+        cur.execute("ALTER TABLE barneys_promos ADD COLUMN IF NOT EXISTS is_major BOOLEAN DEFAULT TRUE;")
         conn.commit()
 
 
-def upsert_barneys_promo(start_date, end_date, promo_name, discount=None, notes=None):
+def upsert_barneys_promo(start_date, end_date, promo_name, discount=None,
+                         notes=None, is_major=True):
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
-            INSERT INTO barneys_promos (start_date, end_date, promo_name, discount, notes)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO barneys_promos
+                (start_date, end_date, promo_name, discount, notes, is_major)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (start_date, promo_name) DO UPDATE SET
                 end_date = EXCLUDED.end_date,
                 discount = EXCLUDED.discount,
-                notes    = EXCLUDED.notes
-        """, (start_date, end_date, promo_name, discount, notes))
+                notes    = EXCLUDED.notes,
+                is_major = EXCLUDED.is_major
+        """, (start_date, end_date, promo_name, discount, notes, is_major))
         conn.commit()
 
 
 def all_barneys_promos():
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
-            SELECT start_date, end_date, promo_name, discount, notes
+            SELECT start_date, end_date, promo_name, discount, notes, is_major
             FROM barneys_promos
             ORDER BY start_date ASC
         """)
