@@ -107,8 +107,13 @@
   </div>
 
   <div class="card" id="salesCard" style="display:none">
-    <h2>Daily sales</h2>
-    <table id="salesTable"><thead><tr><th>Date</th><th>Revenue</th><th>Orders</th><th>Units</th><th>Note</th></tr></thead><tbody></tbody></table>
+    <h2>Daily sales by month</h2>
+    <div class="controls">
+      <span class="lbl">Month:</span>
+      <select id="monthSelect" style="padding:6px 10px;border-radius:6px;border:1px solid var(--line);font-size:13px"></select>
+      <span id="monthSummary" class="lbl" style="margin-left:10px"></span>
+    </div>
+    <table id="salesTable"><thead><tr><th>Date</th><th>Revenue</th><th>Orders</th><th>Units</th><th>Promo running</th></tr></thead><tbody></tbody></table>
   </div>
 </div>
 
@@ -329,34 +334,62 @@ function renderStatic(){
 }
 
 function renderSalesTable(){
-  const sales=filteredSales();
+  const sales=DATA.sales||[];
   document.getElementById("salesCard").style.display="block";
+  const sel=document.getElementById("monthSelect");
+
+  // build the set of months present in the data (YYYY-MM), newest first
+  const months=[...new Set(sales.map(s=>dayOf(s.sale_date).slice(0,7)))].sort().reverse();
+  if(!months.length){
+    document.querySelector("#salesTable tbody").innerHTML="<tr><td colspan=5 class=muted>No sales data.</td></tr>";
+    return;
+  }
+  // populate dropdown once
+  if(!sel.dataset.filled){
+    sel.innerHTML=months.map(m=>{
+      const [y,mo]=m.split("-");
+      const nm=new Date(y,mo-1,1).toLocaleString(undefined,{month:"long",year:"numeric"});
+      return `<option value="${m}">${nm}</option>`;
+    }).join("");
+    sel.dataset.filled="1";
+    sel.onchange=()=>drawMonth(sel.value);
+  }
+  drawMonth(sel.value || months[0]);
+}
+
+// find a promo (from barneys_promos) active on a given YYYY-MM-DD
+function promoOn(day){
+  const promos=DATA.promos||[];
+  const hit=promos.find(p=> day>=dayOf(p.start_date) && day<=dayOf(p.end_date||p.start_date));
+  if(hit) return hit.promo_name + (hit.discount?` (${hit.discount})`:"");
+  return "";
+}
+
+function drawMonth(month){
+  const sales=(DATA.sales||[]).filter(s=>dayOf(s.sale_date).slice(0,7)===month)
+                              .sort((a,b)=>dayOf(a.sale_date).localeCompare(dayOf(b.sale_date)));
   const stb=document.querySelector("#salesTable tbody");
   stb.innerHTML="";
-  if(!sales.length){ stb.innerHTML="<tr><td colspan=5 class=muted>No sales in this range.</td></tr>"; return; }
-  // newest first; cap at 120 rows but always keep rows that have a note
-  const rev=[...sales].reverse();
-  const noted=rev.filter(s=>(s.note||"").trim());
-  const rest=rev.filter(s=>!(s.note||"").trim()).slice(0, Math.max(0,120-noted.length));
-  const show=[...noted, ...rest].sort((a,b)=>dayOf(b.sale_date).localeCompare(dayOf(a.sale_date)));
-  const capped = rev.length>show.length;
-  show.forEach(s=>{
-    const noteCell = (s.note||"").trim()
-      ? `<td style="color:var(--green);font-weight:600">${s.note}</td>` : `<td class=muted></td>`;
+  let rev=0, ord=0;
+  sales.forEach(s=>{
+    rev+=s.revenue==null?0:Number(s.revenue);
+    ord+=s.orders==null?0:Number(s.orders);
+    const promo = promoOn(dayOf(s.sale_date)) || (s.note||"").trim();
+    const promoCell = promo
+      ? `<td style="color:var(--green);font-weight:600">${promo}</td>` : `<td class=muted></td>`;
     stb.insertAdjacentHTML("beforeend",
-      `<tr><td>${dayOf(s.sale_date)}</td><td>${fmtMoney(s.revenue)}</td><td>${s.orders??"—"}</td><td>${s.units??"—"}</td>${noteCell}</tr>`);
+      `<tr><td>${dayOf(s.sale_date)}</td><td>${fmtMoney(s.revenue)}</td><td>${s.orders??"—"}</td><td>${s.units??"—"}</td>${promoCell}</tr>`);
   });
-  if(capped){
-    stb.insertAdjacentHTML("beforeend",
-      `<tr><td colspan=5 class=muted>Showing ${show.length} of ${rev.length} rows (all noted days kept). Use the range buttons above to narrow.</td></tr>`);
-  }
+  const avg = sales.length? rev/sales.length : 0;
+  document.getElementById("monthSummary").textContent =
+    `${sales.length} days · ${fmtK(rev)} total · ${fmtK(avg)}/day avg · ${ord} orders`;
 }
 
 function wireControls(){
   document.querySelectorAll("#rangeCtl button").forEach(b=>b.onclick=()=>{
     rangeMode=b.dataset.range;
     document.querySelectorAll("#rangeCtl button").forEach(x=>x.classList.remove("active"));
-    b.classList.add("active"); renderChart(); renderSalesTable();
+    b.classList.add("active"); renderChart();
   });
   document.querySelectorAll("#aggCtl button").forEach(b=>b.onclick=()=>{
     aggMode=b.dataset.agg;
