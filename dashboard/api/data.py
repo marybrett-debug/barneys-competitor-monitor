@@ -91,7 +91,7 @@ def fetch_payload(days=120):
             cur.execute("""
                 SELECT DISTINCT ON (strain, competitor)
                        strain, competitor, product_name, price, currency,
-                       pack_size, in_stock, observed_at
+                       pack_size, per_seed, in_stock, observed_at
                 FROM price_observations
                 ORDER BY strain, competitor, observed_at DESC
             """)

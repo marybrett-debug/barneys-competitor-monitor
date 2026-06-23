@@ -81,8 +81,40 @@ ENDS_RE = re.compile(
     r"(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*|"
     r"midnight|tonight|today|tomorrow|\d{1,2}\s*(?:am|pm))",
     re.IGNORECASE)
-# price like $39.00, £24, €19.95
+# price like $39.00, £24, €19.95 (symbol before) OR 19,95 € (symbol after)
 PRICE_RE = re.compile(r"([€£$])\s*(\d{1,4}(?:[.,]\d{2})?)")
+PRICE_TRAILING_RE = re.compile(r"(\d{1,4}(?:[.,]\d{2})?)\s*([€£$])")
+# pack size: "5 seeds", "pack of 10", "10 seed", "3-seeds", "10er", "x5"
+PACK_RE = re.compile(
+    r"(?:pack\s*of\s*(\d{1,2})|"
+    r"(\d{1,2})\s*[-\s]?seeds?\b|"
+    r"(\d{1,2})\s*er\b|"
+    r"x\s*(\d{1,2})\b)",
+    re.IGNORECASE)
+
+
+def _parse_price_and_pack(text):
+    """From a chunk of text, return (currency, price, pack_size_int) best-effort.
+    Pairs the first price with the nearest pack-size number found in the text.
+    Handles both '$39.00' and '39,95 €' formats. Returns Nones if no price."""
+    pm = PRICE_RE.search(text or "")
+    if pm:
+        cur = pm.group(1)
+        price = float(pm.group(2).replace(",", "."))
+    else:
+        pm = PRICE_TRAILING_RE.search(text or "")
+        if not pm:
+            return None, None, None
+        cur = pm.group(2)
+        price = float(pm.group(1).replace(",", "."))
+    pack = None
+    km = PACK_RE.search(text or "")
+    if km:
+        for g in km.groups():
+            if g:
+                pack = int(g)
+                break
+    return cur, price, pack
 
 
 def _clean(text: str) -> str:
@@ -237,9 +269,13 @@ def scrape_new_products(name, cfg):
 
 
 def scrape_strain_prices(name, cfg):
-    """For each tracked strain, search the competitor's site and record the
-    first plausible price found. Returns list of dicts + status.
-    Uses the site's own search to stay layout-agnostic."""
+    """For each tracked strain, find the product on the competitor's site and
+    record price + pack size so a per-seed price can be computed.
+
+    Strategy: load the search page, follow the first plausible product link,
+    then parse price and pack size from the product page (where both appear
+    together). Falls back to the search-results text if no product link found.
+    Layout-agnostic by design; logs a warning if nothing parses."""
     base = cfg["url"].split("/", 3)
     origin = "/".join(base[:3]) if len(base) >= 3 else cfg["url"]
     observations = []
@@ -253,17 +289,37 @@ def scrape_strain_prices(name, cfg):
                     text, links = _fetch_text_and_links(search_url, browser)
                 except Exception:
                     continue
-                m = PRICE_RE.search(text or "")
-                if not m:
+
+                # Try to follow the first product link whose anchor mentions the strain
+                product_url = None
+                for anchor, href in links:
+                    a = _clean(anchor).lower()
+                    h = (href or "").lower()
+                    if strain.split()[0].lower() in a and any(
+                            k in h for k in ["/product", "/seeds", "-seeds", "/strain"]):
+                        product_url = href
+                        break
+
+                page_text = text
+                src = search_url
+                if product_url:
+                    try:
+                        page_text, _ = _fetch_text_and_links(product_url, browser)
+                        src = product_url
+                    except Exception:
+                        pass
+
+                cur, price, pack = _parse_price_and_pack(page_text)
+                if price is None:
                     continue
-                cur = m.group(1)
-                price = float(m.group(2).replace(",", "."))
-                in_stock = "out of stock" not in (text or "").lower()
+                in_stock = "out of stock" not in (page_text or "").lower()
+                per_seed = round(price / pack, 2) if (pack and pack > 0) else None
                 observations.append({
                     "competitor": name, "strain": strain,
                     "product_name": strain, "price": price, "currency": cur,
-                    "pack_size": None, "in_stock": in_stock,
-                    "source_url": search_url,
+                    "pack_size": (f"{pack} seeds" if pack else None),
+                    "per_seed": per_seed,
+                    "in_stock": in_stock, "source_url": src,
                 })
         finally:
             browser.close()

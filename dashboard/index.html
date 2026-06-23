@@ -74,7 +74,7 @@
       <thead><tr id="priceHead"><th>Strain</th></tr></thead>
       <tbody></tbody>
     </table>
-    <div class="legend">Lowest price per strain is highlighted. Blank = not found / not tracked on that site.</div>
+    <div class="legend">Compared on <b>per-seed price</b> (pack price ÷ pack size) — the only fair basis across different pack sizes. Lowest per-seed is highlighted green. Pack price and size shown below. Blank = not found; OOS = out of stock.</div>
   </div>
 
   <div class="card" id="launchCard" style="display:none">
@@ -267,16 +267,35 @@ function render(data){
     strains.forEach(st=>{
       const cells = comps.map(c=>{
         const row = prices.find(p=>p.strain===st && p.competitor===c);
-        return row ? {comp:c, price:Number(row.price), cur:row.currency, stock:row.in_stock} : null;
+        if(!row) return null;
+        return {
+          comp:c,
+          price: row.price==null?null:Number(row.price),
+          perSeed: row.per_seed==null?null:Number(row.per_seed),
+          pack: row.pack_size||null,
+          cur: row.currency||"",
+          stock: row.in_stock
+        };
       });
-      const valid = cells.filter(Boolean).map(x=>x.price);
-      const min = valid.length ? Math.min(...valid) : null;
+      // rank on per-seed where available, else fall back to raw price
+      const basis = cells.filter(Boolean).map(x=> x.perSeed!=null ? x.perSeed : x.price);
+      const min = basis.length ? Math.min(...basis) : null;
       let tds = `<td><b>${st}</b></td>`;
       cells.forEach(x=>{
         if(!x){ tds += `<td class=muted>—</td>`; return; }
-        const low = (x.price===min) ? "background:#E8F5E9;font-weight:700;" : "";
+        const cmp = x.perSeed!=null ? x.perSeed : x.price;
+        const low = (cmp===min) ? "background:#E8F5E9;font-weight:700;" : "";
         const oos = x.stock===false ? " <span class=muted>(OOS)</span>" : "";
-        tds += `<td style="${low}">${x.cur||""}${x.price.toFixed(2)}${oos}</td>`;
+        // primary line = per-seed (the fair comparison); secondary = pack price
+        let main, sub;
+        if(x.perSeed!=null){
+          main = `${x.cur}${x.perSeed.toFixed(2)}/seed`;
+          sub = `<div class=muted style="font-size:11px">${x.cur}${x.price.toFixed(2)} · ${x.pack||"?"}</div>`;
+        } else {
+          main = `${x.cur}${x.price.toFixed(2)}`;
+          sub = `<div class=muted style="font-size:11px">pack size n/a</div>`;
+        }
+        tds += `<td style="${low}">${main}${oos}${sub}</td>`;
       });
       ptb.insertAdjacentHTML("beforeend", `<tr>${tds}</tr>`);
     });

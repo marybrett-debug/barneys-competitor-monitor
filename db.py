@@ -194,11 +194,13 @@ def init_intel_schema():
                 price        NUMERIC(10,2),
                 currency     TEXT,
                 pack_size    TEXT,                -- e.g. "5 seeds" if detected
+                per_seed     NUMERIC(10,2),       -- price / pack count, the fair comparison
                 in_stock     BOOLEAN,
                 observed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
                 source_url   TEXT
             );
         """)
+        cur.execute("ALTER TABLE price_observations ADD COLUMN IF NOT EXISTS per_seed NUMERIC(10,2);")
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_price_strain_time
             ON price_observations (strain, competitor, observed_at DESC);
@@ -220,15 +222,15 @@ def upsert_product(competitor, product_name, source_url=None):
 
 
 def insert_price(competitor, strain, product_name, price, currency,
-                 pack_size=None, in_stock=None, source_url=None):
+                 pack_size=None, per_seed=None, in_stock=None, source_url=None):
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
             INSERT INTO price_observations
               (competitor, strain, product_name, price, currency,
-               pack_size, in_stock, source_url)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+               pack_size, per_seed, in_stock, source_url)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (competitor, strain, product_name, price, currency,
-              pack_size, in_stock, source_url))
+              pack_size, per_seed, in_stock, source_url))
         conn.commit()
 
 
@@ -249,7 +251,7 @@ def latest_prices_by_strain():
         cur.execute("""
             SELECT DISTINCT ON (strain, competitor)
                    strain, competitor, product_name, price, currency,
-                   pack_size, in_stock, observed_at, source_url
+                   pack_size, per_seed, in_stock, observed_at, source_url
             FROM price_observations
             ORDER BY strain, competitor, observed_at DESC
         """)
