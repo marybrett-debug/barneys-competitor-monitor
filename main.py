@@ -23,9 +23,10 @@ def do_scrape():
     for name, row, status, detail in scrape_all():
         if status == "ok" and row:
             db.insert_snapshot(row)
-            db.log_health(name, "ok", "")
+            db.log_health(name, "ok" if not detail else "warning", detail)
             stored += 1
-            print(f"[ok] {name}: promo stored")
+            note = f" ({detail})" if detail else ""
+            print(f"[ok] {name}: promo stored{note}")
         else:
             db.log_health(name, status, detail)
             skipped += 1

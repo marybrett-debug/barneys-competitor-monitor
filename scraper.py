@@ -19,7 +19,10 @@ from playwright.sync_api import sync_playwright
 
 # ---- Per-competitor configuration -------------------------------------------
 # 'signals' = words we expect on a healthy promo page. Missing ALL of them = warning.
-# 'new_url' = optional new-arrivals/new-strains page to detect product launches.
+# 'url'        = primary promo page.
+# 'extra_urls' = optional additional promo pages; their text is merged into the
+#                same daily snapshot (useful when a site splits promos across pages).
+# 'new_url'    = optional new-arrivals/new-strains page to detect product launches.
 COMPETITORS = {
     "Barney's Farm": {
         "url": "https://www.barneysfarm.com/special-offer-seeds",
@@ -28,12 +31,16 @@ COMPETITORS = {
         "is_us": True,   # our own site — pinned to the top of the report
     },
     "ILGM": {
-        "url": "https://ilgm.com/pages/coupons",
+        "url": "https://ilgm.com/collections/deals",
         "signals": ["off", "code", "seeds", "discount", "%"],
         "new_url": "https://ilgm.com/collections/new-marijuana-seeds",
     },
     "Royal Queen Seeds": {
-        "url": "https://www.royalqueenseeds.com/us/content/129-promotions",
+        "url": "https://www.royalqueenseeds.com/content/54-promos-and-discount-codes",
+        "extra_urls": [
+            "https://www.royalqueenseeds.com/content/58-cheap-cannabis-seeds",
+            "https://www.royalqueenseeds.com/bogo",
+        ],
         "signals": ["off", "free", "seeds", "shipping", "%"],
         "new_url": "https://www.royalqueenseeds.com/us/9-feminized-cannabis-seeds?orderby=date_add&orderway=desc",
     },
@@ -43,7 +50,7 @@ COMPETITORS = {
         "new_url": "https://sensiseeds.com/en/cannabis-seeds/new",
     },
     "Seedsman": {
-        "url": "https://www.seedsman.com/us-en/special-offers",
+        "url": "https://www.seedsman.com/us-en/promotions",
         "signals": ["off", "free", "seeds", "offer", "%"],
         "new_url": "https://www.seedsman.com/us-en/new-products",
     },
@@ -157,7 +164,13 @@ def _hash(parsed: dict, raw: str) -> str:
 
 
 def scrape_one(name: str, cfg: dict) -> dict:
-    """Returns (row_for_db, health_status, health_detail)."""
+    """Fetch the primary promo URL plus any extra_urls, merge their visible text,
+    and parse the combined content into one daily snapshot.
+    Returns (row_for_db, health_status, health_detail)."""
+    urls = [cfg["url"]] + list(cfg.get("extra_urls", []))
+    texts = []
+    fetched = []
+    first_error = None
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
         page = browser.new_page(
@@ -165,19 +178,25 @@ def scrape_one(name: str, cfg: dict) -> dict:
                         "AppleWebKit/537.36 (KHTML, like Gecko) "
                         "Chrome/124.0 Safari/537.36")
         )
-        try:
-            page.goto(cfg["url"], wait_until="networkidle", timeout=45000)
-            page.wait_for_timeout(2500)  # let lazy promo banners settle
-            body = page.inner_text("body")
-        except Exception as e:
-            browser.close()
-            return None, "error", f"fetch failed: {e}"
+        for u in urls:
+            try:
+                page.goto(u, wait_until="networkidle", timeout=45000)
+                page.wait_for_timeout(2500)  # let lazy promo banners settle
+                texts.append(page.inner_text("body"))
+                fetched.append(u)
+            except Exception as e:
+                if first_error is None:
+                    first_error = f"{u}: {e}"
         browser.close()
 
+    if not texts:
+        return None, "error", f"all promo URLs failed (first: {first_error})"
+
+    body = "\n".join(texts)
     raw = _clean(body)
     low = raw.lower()
 
-    # Health check: did we land on a real promo page?
+    # Health check: did we land on real promo pages?
     if len(raw) < 200:
         return None, "warning", f"page text suspiciously short ({len(raw)} chars)"
     if not any(sig.lower() in low for sig in cfg["signals"]):
@@ -187,15 +206,21 @@ def scrape_one(name: str, cfg: dict) -> dict:
     # headline = first reasonably long line of text
     headline = next((ln for ln in body.splitlines() if len(ln.strip()) > 15), "")[:300]
 
+    # if some (but not all) extra URLs failed, still store but note it
+    detail = ""
+    if len(fetched) < len(urls):
+        missed = len(urls) - len(fetched)
+        detail = f"{missed} of {len(urls)} promo pages failed to load"
+
     row = {
         "competitor": name,
-        "url": cfg["url"],
+        "url": " | ".join(fetched),
         "headline": _clean(headline) or None,
         **parsed,
         "raw_text": raw[:8000],  # cap stored text
         "content_hash": _hash(parsed, raw),
     }
-    return row, "ok", ""
+    return row, "ok", detail
 
 
 def scrape_all():
