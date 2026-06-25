@@ -67,7 +67,8 @@ def fetch_payload(days=800):
 
         cur.execute("""
             SELECT competitor, captured_at, headline, discount_text, codes,
-                   free_seeds, shipping, spend_tiers, promo_ends, content_hash
+                   free_seeds, shipping, spend_tiers, promo_ends,
+                   left(raw_text, 4000) AS raw_text, content_hash
             FROM promo_snapshots
             WHERE captured_at >= %s
             ORDER BY captured_at ASC
@@ -176,6 +177,7 @@ def _latest_competitor_state(snapshots):
             "shipping": s.get("shipping"),
             "spend_tiers": s.get("spend_tiers"),
             "promo_ends": s.get("promo_ends"),
+            "raw_text": s.get("raw_text"),
         })
     return out
 

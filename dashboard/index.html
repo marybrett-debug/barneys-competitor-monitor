@@ -517,7 +517,7 @@ function renderCompState(){
     ["spend_tiers","Spend & get"],["codes","Codes"],
     ["shipping","Shipping"],["promo_ends","Ends"],
   ];
-  box.innerHTML = state.map(c=>{
+  box.innerHTML = state.map((c,i)=>{
     const star = c.competitor===US ? "⭐ " : "";
     const when = c.captured_at ? `<span class=muted style="font-weight:400;font-size:11px"> · ${dayOf(c.captured_at)}</span>` : "";
     const head = c.headline ? `<div class=muted style="font-size:12px;margin:2px 0 6px;font-style:italic">${(c.headline||"").replace(/</g,"&lt;")}</div>` : "";
@@ -525,8 +525,16 @@ function renderCompState(){
       `<div style="font-size:12px;margin:2px 0"><b style="color:#555">${label}:</b> <span style="color:var(--green)">${(c[k]||"").replace(/</g,"&lt;")}</span></div>`
     ).join("");
     const body = rows || `<div class=muted style="font-size:12px">No active promo detected.</div>`;
+    const copy = (c.raw_text||"").trim();
+    const copyBlock = copy
+      ? `<div style="margin-top:8px">`+
+        `<span class="subj-toggle" onclick="var e=document.getElementById('copy${i}');var open=e.style.display==='block';e.style.display=open?'none':'block';this.querySelector('.caret').textContent=open?'▸':'▾';">`+
+        `<span class="caret">▸</span> show full page copy</span>`+
+        `<div id="copy${i}" style="display:none;margin-top:6px;padding:8px 10px;background:#faf8f5;border-radius:6px;font-size:11px;color:#444;white-space:pre-wrap;max-height:260px;overflow-y:auto">${copy.replace(/</g,"&lt;")}</div>`+
+        `</div>`
+      : "";
     return `<div style="border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:10px">
-      <div style="font-weight:700">${star}${c.competitor}${when}</div>${head}${body}
+      <div style="font-weight:700">${star}${c.competitor}${when}</div>${head}${body}${copyBlock}
     </div>`;
   }).join("");
 }
