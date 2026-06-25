@@ -91,15 +91,15 @@
     <div class="controls">
       <span class="lbl">Range:</span>
       <div class="grp" id="rangeCtl">
-        <button data-range="all" class="active">All</button>
+        <button data-range="all">All</button>
         <button data-range="2025">2025</button>
-        <button data-range="2026">2026</button>
+        <button data-range="2026" class="active">2026</button>
         <button data-range="180">Last 6mo</button>
       </div>
       <span class="lbl" style="margin-left:10px">View:</span>
       <div class="grp" id="aggCtl">
-        <button data-agg="day" class="active">Daily</button>
-        <button data-agg="week">Weekly</button>
+        <button data-agg="day">Daily</button>
+        <button data-agg="week" class="active">Weekly</button>
       </div>
     </div>
     <canvas id="chart" height="120"></canvas>
@@ -173,8 +173,8 @@
 const US = "Barney's Farm";
 let DATA = null;            // full payload
 let chart = null;
-let rangeMode = "all";     // all | 2025 | 2026 | 180
-let aggMode = "day";       // day | week
+let rangeMode = "2026";    // all | 2025 | 2026 | 180
+let aggMode = "week";      // day | week
 let perfScope = "major";   // major | all
 
 function dayOf(iso){ return (iso||"").slice(0,10); }
