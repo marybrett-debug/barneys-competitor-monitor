@@ -33,7 +33,8 @@ def _competitor_section(name, is_us=False):
     status = ":large_green_circle: *CHANGED*" if changed else ":white_circle: no change"
 
     fields = [("Discount", "discount_text"), ("Codes", "codes"),
-              ("Free seeds", "free_seeds"), ("Free shipping", "shipping")]
+              ("Free seeds", "free_seeds"), ("Free shipping", "shipping"),
+              ("Spend tiers", "spend_tiers"), ("Ends", "promo_ends")]
     lines = []
     for label, key in fields:
         now_v = _fmt(newest.get(key))
@@ -80,6 +81,28 @@ def build_slack_payload():
                    "text": {"type": "mrkdwn", "text": "*— Competitors —*"}})
     for name in ["ILGM", "Royal Queen Seeds", "Sensi Seeds", "Seedsman"]:
         blocks += _competitor_section(name)
+
+    # New product launches — disabled in report (mostly re-indexed pages, not
+    # real launches). Data still collected in product_listings. Flip to re-enable.
+    SHOW_LAUNCHES = False
+    try:
+        launches = db.new_products_since(week_ago) if SHOW_LAUNCHES else []
+    except Exception:
+        launches = []
+    if launches:
+        by_comp = {}
+        for l in launches:
+            by_comp.setdefault(l["competitor"], []).append(l["product_name"])
+        lines = []
+        for comp, items in by_comp.items():
+            shown = ", ".join(items[:8])
+            extra = f" (+{len(items)-8} more)" if len(items) > 8 else ""
+            lines.append(f"*{comp}:* {shown}{extra}")
+        blocks.append({"type": "divider"})
+        blocks.append({"type": "section",
+                       "text": {"type": "mrkdwn",
+                                "text": ":seedling: *New product launches this week*\n"
+                                        + "\n".join(lines)}})
 
     return {"blocks": blocks}
 
