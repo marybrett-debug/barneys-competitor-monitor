@@ -304,3 +304,49 @@ def all_barneys_promos():
             ORDER BY start_date ASC
         """)
         return cur.fetchall()
+
+
+# ---- Klaviyo email campaigns (engagement + subjects) ------------------------
+
+def init_klaviyo_schema():
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS klaviyo_campaigns (
+                id            SERIAL PRIMARY KEY,
+                send_date     DATE NOT NULL,
+                subject       TEXT NOT NULL,
+                campaign_name TEXT,
+                open_rate     NUMERIC(6,2),
+                click_rate    NUMERIC(6,2),
+                recipients    INTEGER,
+                unsubscribes  INTEGER,
+                UNIQUE (send_date, subject)
+            );
+        """)
+        conn.commit()
+
+
+def upsert_campaign(send_date, subject, campaign_name=None, open_rate=None,
+                    click_rate=None, recipients=None, unsubscribes=None):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO klaviyo_campaigns
+              (send_date, subject, campaign_name, open_rate, click_rate, recipients, unsubscribes)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (send_date, subject) DO UPDATE SET
+              campaign_name=EXCLUDED.campaign_name, open_rate=EXCLUDED.open_rate,
+              click_rate=EXCLUDED.click_rate, recipients=EXCLUDED.recipients,
+              unsubscribes=EXCLUDED.unsubscribes
+        """, (send_date, subject, campaign_name, open_rate, click_rate, recipients, unsubscribes))
+        conn.commit()
+
+
+def all_campaigns():
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT send_date, subject, campaign_name, open_rate, click_rate,
+                   recipients, unsubscribes
+            FROM klaviyo_campaigns
+            ORDER BY send_date ASC
+        """)
+        return cur.fetchall()

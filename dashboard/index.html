@@ -45,6 +45,12 @@
   .bar-row .bar{height:100%;border-radius:4px;background:var(--green)}
   .bar-row .bar.neg{background:#d9534f}
   .bar-row .val{width:70px;flex:none;text-align:right;font-weight:700}
+  .perf-item{margin:8px 0;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  .perf-meta{display:flex;gap:14px;align-items:center;margin:3px 0 0 0;padding-left:2px}
+  .perf-meta .eng{font-size:12px;color:#666}
+  .subj-toggle{font-size:11px;color:var(--orange-dark);cursor:pointer;user-select:none}
+  .subjects{margin:5px 0 2px 12px;padding:6px 10px;background:#faf8f5;border-radius:6px}
+  .subj-line{font-size:12px;color:#444;padding:1px 0}
   .pill{display:inline-block;font-size:10px;padding:1px 6px;border-radius:10px;background:#eee;color:#666;margin-left:6px}
 </style>
 </head>
@@ -281,7 +287,7 @@ function renderPerf(){
   if(!perf.length){ box.innerHTML="<p class=muted>No promo performance data yet.</p>"; return; }
   const lifts=perf.map(p=>p.lift_pct).filter(v=>v!=null);
   const maxAbs=Math.max(60, ...lifts.map(Math.abs));
-  box.innerHTML = perf.map(p=>{
+  box.innerHTML = perf.map((p,i)=>{
     const lift=p.lift_pct;
     const w = lift==null?0:Math.min(100, Math.abs(lift)/maxAbs*100);
     const neg = lift!=null && lift<0;
@@ -290,10 +296,24 @@ function renderPerf(){
     const thin = (p.baseline_days!=null && p.baseline_days < 5) ? " ⚠ thin baseline" : "";
     const tip = `${p.during_avg?fmtK(p.during_avg):"—"}/day during (${p.days} days) vs ${p.baseline_avg?fmtK(p.baseline_avg):"—"}/day baseline (${bdays} clean days)${thin} · ${fmtK(p.total_revenue)} total`;
     const pill = p.is_major===false?'<span class=pill>minor</span>':'';
-    return `<div class="bar-row" title="${tip}">
-      <div class="nm">${p.promo_name}${pill}</div>
-      <div class="bar-wrap"><div class="bar ${neg?'neg':''}" style="width:${w}%"></div></div>
-      <div class="val" style="color:${neg?'#d9534f':'var(--green)'}">${val}</div>
+    const open = p.avg_open!=null?p.avg_open+"%":"—";
+    const click = p.avg_click!=null?p.avg_click+"%":"—";
+    const eng = `<div class="eng" title="avg across ${p.email_count||0} emails sent during this promo">📧 ${open} open · ${click} click</div>`;
+    // subjects expandable
+    const subj = (p.subjects&&p.subjects.length)
+      ? `<div class="subjects" id="subj${i}" style="display:none">`+
+        p.subjects.map(s=>`<div class="subj-line">• ${s.replace(/</g,"&lt;")}</div>`).join("")+`</div>`
+      : "";
+    const toggle = (p.subjects&&p.subjects.length)
+      ? `<span class="subj-toggle" onclick="var e=document.getElementById('subj${i}');e.style.display=e.style.display==='none'?'block':'none';this.textContent=e.style.display==='none'?'▸ ${p.subjects.length} emails':'▾ hide';">▸ ${p.subjects.length} emails</span>` : "";
+    return `<div class="perf-item">
+      <div class="bar-row" title="${tip}">
+        <div class="nm">${p.promo_name}${pill}</div>
+        <div class="bar-wrap"><div class="bar ${neg?'neg':''}" style="width:${w}%"></div></div>
+        <div class="val" style="color:${neg?'#d9534f':'var(--green)'}">${val}</div>
+      </div>
+      <div class="perf-meta">${eng} ${toggle}</div>
+      ${subj}
     </div>`;
   }).join("");
 }
