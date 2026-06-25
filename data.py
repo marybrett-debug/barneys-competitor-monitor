@@ -141,6 +141,8 @@ def fetch_payload(days=800):
 
     # ---- current competitor state: latest snapshot per competitor ----
     competitor_state = _latest_competitor_state(snapshots)
+    # ---- competitor state grouped by week (for the week filter) ----
+    competitor_weeks = _competitor_state_by_week(snapshots)
 
     # ---- monthly year-over-year comparison ----
     monthly = _compute_monthly(sales, promos, campaigns)
@@ -150,7 +152,8 @@ def fetch_payload(days=800):
             "promos": promos, "performance": performance,
             "monthly": monthly, "campaigns": campaigns,
             "special_offers": special_offers,
-            "competitor_state": competitor_state}
+            "competitor_state": competitor_state,
+            "competitor_weeks": competitor_weeks}
 
 
 def _latest_competitor_state(snapshots):
@@ -182,11 +185,59 @@ def _latest_competitor_state(snapshots):
     return out
 
 
+def _competitor_state_by_week(snapshots):
+    """Group competitor snapshots by ISO week (Monday date). For each week,
+    keep the latest snapshot per competitor within that week. Returns:
+      { "weeks": [list of week-start dates, newest first],
+        "byWeek": { week: [ {competitor, ...fields}, ... ] } }
+    so the dashboard can offer a week dropdown."""
+    from datetime import date as _date, timedelta as _td
+
+    def parse(d):
+        try:
+            return _date.fromisoformat((d or "")[:10])
+        except Exception:
+            return None
+
+    def week_start(d):
+        # Monday of that date's week
+        return (d - _td(days=d.weekday())).isoformat()
+
+    # week -> competitor -> latest snapshot in that week
+    grouped = {}
+    for s in snapshots:
+        c = s.get("competitor")
+        d = parse(s.get("captured_at"))
+        if not c or not d:
+            continue
+        wk = week_start(d)
+        slot = grouped.setdefault(wk, {})
+        prev = slot.get(c)
+        if prev is None or (s.get("captured_at") or "") > (prev.get("captured_at") or ""):
+            slot[c] = s
+
+    weeks = sorted(grouped.keys(), reverse=True)
+    by_week = {}
+    for wk in weeks:
+        comps = grouped[wk]
+        by_week[wk] = [{
+            "competitor": c,
+            "captured_at": comps[c].get("captured_at"),
+            "headline": comps[c].get("headline"),
+            "discount_text": comps[c].get("discount_text"),
+            "codes": comps[c].get("codes"),
+            "free_seeds": comps[c].get("free_seeds"),
+            "shipping": comps[c].get("shipping"),
+            "spend_tiers": comps[c].get("spend_tiers"),
+            "promo_ends": comps[c].get("promo_ends"),
+            "raw_text": comps[c].get("raw_text"),
+        } for c in sorted(comps.keys())]
+    return {"weeks": weeks, "byWeek": by_week}
+
+
 def _dedupe_subjects(subjects):
     """Collapse near-duplicate / reminder subjects to distinct messaging.
-    Strips emojis and urgency framing, then keys on the offer mechanics (the
-    substantive part, often after a bullet/dash) so reminder sends of the same
-    promo with different openers collapse together. Preserves original order."""
+    Keys on the offer tokens so reminder sends of the same promo collapse."""
     import re as _re
 
     def normalize(s):

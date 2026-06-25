@@ -142,9 +142,15 @@
   </div>
 
   <div class="card" id="compStateCard" style="display:none">
-    <h2>What competitors are offering now</h2>
+    <h2>Competitor offers by week</h2>
+    <div class="controls">
+      <span class="lbl">Week:</span>
+      <select id="compWeek" style="padding:6px 10px;border-radius:6px;border:1px solid var(--line);font-size:13px"></select>
+      <span id="compWeekSummary" class="lbl" style="margin-left:10px"></span>
+    </div>
     <div id="compState"></div>
-    <div class="legend">Most recent capture from each competitor's promo page(s). Compare against your own special offers above.</div>
+    <div id="compDiff" style="margin-top:6px"></div>
+    <div class="legend">Each competitor's offers for the selected week (latest capture that week), with your own special offers included for side-by-side comparison. Pick a past week to see what everyone was running then.</div>
   </div>
 
   <div class="card" id="changeCard" style="display:none">
@@ -507,21 +513,104 @@ function drawOfferWeek(week, weeks, byWeek){
   diffBox.innerHTML=h;
 }
 
+const COMP_FIELDS=[
+  ["discount_text","Discount"],["free_seeds","Free seeds"],
+  ["spend_tiers","Spend & get"],["codes","Codes"],
+  ["shipping","Shipping"],["promo_ends","Ends"],
+];
+
 function renderCompState(){
-  const state=DATA.competitor_state||[];
-  if(!state.length) return;
+  const cw=DATA.competitor_weeks;
+  if(!cw || !cw.weeks || !cw.weeks.length){
+    // fall back to flat latest-state if weekly grouping unavailable
+    const state=DATA.competitor_state||[];
+    if(!state.length) return;
+    document.getElementById("compStateCard").style.display="block";
+    document.getElementById("compState").innerHTML=compCardsHTML(state);
+    return;
+  }
   document.getElementById("compStateCard").style.display="block";
-  const box=document.getElementById("compState");
-  const fields=[
-    ["discount_text","Discount"],["free_seeds","Free seeds"],
-    ["spend_tiers","Spend & get"],["codes","Codes"],
-    ["shipping","Shipping"],["promo_ends","Ends"],
-  ];
-  box.innerHTML = state.map((c,i)=>{
+  const sel=document.getElementById("compWeek");
+  if(!sel.dataset.filled){
+    sel.innerHTML=cw.weeks.map(w=>`<option value="${w}">Week of ${w}</option>`).join("");
+    sel.dataset.filled="1";
+    sel.onchange=()=>drawCompWeek(sel.value);
+  }
+  drawCompWeek(sel.value || cw.weeks[0]);
+}
+
+// build our own special offers into a competitor-style card for the given week
+function ourOffersForWeek(week){
+  const all=DATA.special_offers||[];
+  if(!all.length) return null;
+  // find the special-offers capture in the same ISO week
+  const weeksSeen={};
+  all.forEach(o=>{ const d=dayOf(o.week||o.captured_at); weeksSeen[d]=(weeksSeen[d]||0)+1; });
+  // pick the offer-capture date that falls in the selected Monday..Sunday window
+  const mon=new Date(week); const sun=new Date(mon); sun.setDate(mon.getDate()+6);
+  const inWeek=all.filter(o=>{ const d=new Date(dayOf(o.week||o.captured_at)); return d>=mon && d<=sun; });
+  if(!inWeek.length) return null;
+  const disc=inWeek.filter(o=>o.is_discounted).length;
+  const lines=inWeek.map(o=>{
+    const cur=o.currency||"$";
+    const price=o.price!=null?(o.is_discounted&&o.was_price!=null
+      ? `${cur}${Number(o.was_price).toFixed(2)}→${cur}${Number(o.price).toFixed(2)}`
+      : `${cur}${Number(o.price).toFixed(2)}`):"";
+    return `${o.strain}${price?` (${price})`:""}`;
+  });
+  return {
+    competitor: US,
+    captured_at: inWeek[0].week||inWeek[0].captured_at,
+    discount_text: `${inWeek.length} strains on offer${disc?`, ${disc} discounted`:""}`,
+    free_seeds:null, spend_tiers:null, codes:null, shipping:null, promo_ends:null,
+    headline: lines.slice(0,8).join("  •  ")+(lines.length>8?` …(+${lines.length-8})`:""),
+    raw_text: lines.join("\n"),
+  };
+}
+
+function drawCompWeek(week){
+  const cw=DATA.competitor_weeks;
+  let cards=(cw.byWeek[week]||[]).slice();
+  // inject our own special offers for that week (so it's a true side-by-side)
+  const ours=ourOffersForWeek(week);
+  if(ours){ cards=cards.filter(c=>c.competitor!==US); cards.unshift(ours); }
+  document.getElementById("compState").innerHTML=compCardsHTML(cards);
+
+  const summary=`${cards.length} sources captured`;
+  document.getElementById("compWeekSummary").textContent=summary;
+
+  // diff vs prior week
+  const idx=cw.weeks.indexOf(week);
+  const prevWeek = idx>=0 && idx<cw.weeks.length-1 ? cw.weeks[idx+1] : null;
+  const box=document.getElementById("compDiff");
+  if(!prevWeek){ box.innerHTML=`<div class=muted style="font-size:12px">No earlier week to compare.</div>`; return; }
+  const cur=cw.byWeek[week]||[], prev=cw.byWeek[prevWeek]||[];
+  const lines=[];
+  cur.forEach(c=>{
+    const p=prev.find(x=>x.competitor===c.competitor);
+    if(!p){ lines.push(`<div><span style="color:var(--green)">＋</span> ${c.competitor}: first seen this week</div>`); return; }
+    COMP_FIELDS.forEach(([k,label])=>{
+      const a=(p[k]||"").trim(), b=(c[k]||"").trim();
+      if(a!==b){
+        let verb,body;
+        if(!a){verb=`<span style="color:var(--green)">started</span>`;body=b;}
+        else if(!b){verb=`<span style="color:#d9534f">stopped</span>`;body=a;}
+        else {verb="changed";body=`<span class=muted>${a}</span> → ${b}`;}
+        lines.push(`<div><b>${c.competitor}</b> · ${label} ${verb}: ${(body||"").replace(/</g,"&lt;")}</div>`);
+      }
+    });
+  });
+  box.innerHTML = lines.length
+    ? `<div style="font-weight:600;font-size:13px;margin:10px 0 4px">Changes vs week of ${prevWeek}</div><div style="font-size:12px;line-height:1.7">${lines.join("")}</div>`
+    : `<div class=muted style="font-size:12px;margin-top:8px">No changes vs week of ${prevWeek}.</div>`;
+}
+
+function compCardsHTML(cards){
+  return cards.map((c,i)=>{
     const star = c.competitor===US ? "⭐ " : "";
     const when = c.captured_at ? `<span class=muted style="font-weight:400;font-size:11px"> · ${dayOf(c.captured_at)}</span>` : "";
     const head = c.headline ? `<div class=muted style="font-size:12px;margin:2px 0 6px;font-style:italic">${(c.headline||"").replace(/</g,"&lt;")}</div>` : "";
-    const rows = fields.filter(([k])=>c[k]).map(([k,label])=>
+    const rows = COMP_FIELDS.filter(([k])=>c[k]).map(([k,label])=>
       `<div style="font-size:12px;margin:2px 0"><b style="color:#555">${label}:</b> <span style="color:var(--green)">${(c[k]||"").replace(/</g,"&lt;")}</span></div>`
     ).join("");
     const body = rows || `<div class=muted style="font-size:12px">No active promo detected.</div>`;
@@ -533,7 +622,8 @@ function renderCompState(){
         `<div id="copy${i}" style="display:none;margin-top:6px;padding:8px 10px;background:#faf8f5;border-radius:6px;font-size:11px;color:#444;white-space:pre-wrap;max-height:260px;overflow-y:auto">${copy.replace(/</g,"&lt;")}</div>`+
         `</div>`
       : "";
-    return `<div style="border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:10px">
+    const border = c.competitor===US ? "2px solid var(--green)" : "1px solid var(--line)";
+    return `<div style="border:${border};border-radius:8px;padding:12px 14px;margin-bottom:10px">
       <div style="font-weight:700">${star}${c.competitor}${when}</div>${head}${body}${copyBlock}
     </div>`;
   }).join("");
