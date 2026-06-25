@@ -2,16 +2,36 @@
 Entry point for the competitor promo monitor.
 
 Usage (set by Railway cron schedules):
-    python main.py scrape    # daily — promos + product launches + prices
-    python main.py report    # weekly (Mondays) — build + post the Slack summary
+    python main.py scrape           # daily — promos + product launches + prices
+    python main.py report           # weekly (Mondays) — Slack summary
+    python main.py special_offers   # weekly (Wednesdays) — our US special-offers page
 
 On first run it auto-creates the schema, so a fresh Postgres works immediately.
 """
 import sys
+from datetime import datetime, timezone
 import db
 from scraper import (scrape_all, scrape_new_products, scrape_strain_prices,
-                     COMPETITORS)
+                     scrape_special_offers, COMPETITORS)
 from report import run_report
+
+
+def do_special_offers():
+    """Scrape barneysfarm.com/us/special-offer-seeds and store each strain's
+    offer + price. Meant to run weekly on Wednesdays."""
+    db.init_special_offers_schema()
+    offers, status, detail = scrape_special_offers()
+    if status == "ok":
+        for o in offers:
+            db.insert_special_offer(**o)
+        disc = sum(1 for o in offers if o.get("is_discounted"))
+        db.log_health("Barney's Farm (special offers)", "ok",
+                      f"{len(offers)} offers, {disc} discounted")
+        print(f"[ok] special offers: {len(offers)} strains "
+              f"({disc} discounted) stored")
+    else:
+        db.log_health("Barney's Farm (special offers)", status, detail)
+        print(f"[{status}] special offers — {detail}")
 
 
 def do_scrape():
@@ -64,6 +84,11 @@ def do_scrape():
     print(f"Scrape complete. promos stored={stored} skipped={skipped} "
           f"new_products={new_found} prices={price_count}")
 
+    # 4) On Wednesdays, also capture our own special-offers page
+    if datetime.now(timezone.utc).weekday() == 2:  # Monday=0 ... Wednesday=2
+        print("Wednesday — capturing special offers page…")
+        do_special_offers()
+
 
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "scrape"
@@ -72,8 +97,10 @@ def main():
     elif mode == "report":
         db.init_schema()
         run_report()
+    elif mode == "special_offers":
+        do_special_offers()
     else:
-        print(f"Unknown mode: {mode}. Use 'scrape' or 'report'.")
+        print(f"Unknown mode: {mode}. Use 'scrape', 'report', or 'special_offers'.")
         sys.exit(1)
 
 

@@ -110,22 +110,92 @@ def fetch_payload(days=800):
         except Exception:
             promos = []
 
+        # Klaviyo email campaigns
+        try:
+            cur.execute("""
+                SELECT send_date, subject, campaign_name, open_rate, click_rate,
+                       recipients, unsubscribes
+                FROM klaviyo_campaigns
+                ORDER BY send_date ASC
+            """)
+            campaigns = _serialize(cur.fetchall())
+        except Exception:
+            campaigns = []
+
+        # latest special offers from our own page
+        try:
+            cur.execute("SELECT max(captured_at) AS m FROM special_offers")
+            mrow = cur.fetchone()
+            if mrow and mrow["m"]:
+                cur.execute("""
+                    SELECT strain, offer, price, was_price, is_discounted,
+                           currency, captured_at
+                    FROM special_offers
+                    WHERE captured_at = %s
+                    ORDER BY strain ASC
+                """, (mrow["m"],))
+                special_offers = _serialize(cur.fetchall())
+            else:
+                special_offers = []
+        except Exception:
+            special_offers = []
+
     # ---- promo performance: avg daily revenue during vs baseline around it ----
     performance = _compute_performance(sales, promos)
+    _attach_engagement(performance, campaigns)
 
     # ---- monthly year-over-year comparison ----
-    monthly = _compute_monthly(sales, promos)
+    monthly = _compute_monthly(sales, promos, campaigns)
 
     return {"sales": sales, "snapshots": snapshots,
             "launches": launches, "prices": prices,
             "promos": promos, "performance": performance,
-            "monthly": monthly}
+            "monthly": monthly, "campaigns": campaigns,
+            "special_offers": special_offers}
 
 
-def _compute_monthly(sales, promos):
-    """Aggregate revenue/orders by calendar month and attach the promo(s) that
-    ran in that month. Returns {year: {month(1-12): {...}}} plus the year list."""
+def _attach_engagement(performance, campaigns):
+    """For each promo in the performance list, average the open/click rates of
+    the email campaigns that went out during its window, and attach the subjects."""
     from datetime import date as _date
+
+    def parse(d):
+        try:
+            return _date.fromisoformat(d[:10])
+        except Exception:
+            return None
+
+    cs = []
+    for c in campaigns:
+        d = parse(c.get("send_date", ""))
+        if d:
+            cs.append((d, c))
+
+    for p in performance:
+        start = parse(p.get("start_date", ""))
+        end = parse(p.get("end_date", "")) or start
+        if not start:
+            continue
+        during = [c for (d, c) in cs if start <= d <= end]
+        if not during:
+            p["email_count"] = 0
+            p["avg_open"] = None
+            p["avg_click"] = None
+            p["subjects"] = []
+            continue
+        opens = [c["open_rate"] for c in during if c.get("open_rate") is not None]
+        clicks = [c["click_rate"] for c in during if c.get("click_rate") is not None]
+        p["email_count"] = len(during)
+        p["avg_open"] = round(sum(opens) / len(opens), 1) if opens else None
+        p["avg_click"] = round(sum(clicks) / len(clicks), 2) if clicks else None
+        p["subjects"] = [c["subject"] for c in during]
+
+
+def _compute_monthly(sales, promos, campaigns=None):
+    """Aggregate revenue/orders by calendar month and attach the promo(s) and
+    email subjects that ran in that month. Returns {year: {month: {...}}}."""
+    from datetime import date as _date
+    campaigns = campaigns or []
 
     def parse(d):
         try:
@@ -145,23 +215,35 @@ def _compute_monthly(sales, promos):
         cell["days"] += 1
 
     # attach promos: a promo belongs to a month if its window overlaps it
-    promo_by_ym = {}  # (year,month) -> set of names
+    promo_by_ym = {}  # (year,month) -> list of {label, notes}
     for p in promos:
         ps, pe = parse(p.get("start_date", "")), parse(p.get("end_date", ""))
         if not ps:
             continue
         pe = pe or ps
-        # walk each month the promo touches
         y, m = ps.year, ps.month
         while (y < pe.year) or (y == pe.year and m <= pe.month):
             label = p.get("promo_name", "")
             if p.get("discount"):
                 label += f" ({p['discount']})"
-            promo_by_ym.setdefault((y, m), []).append(label)
+            promo_by_ym.setdefault((y, m), []).append(
+                {"label": label, "notes": p.get("notes") or ""})
             m += 1
             if m > 12:
                 m = 1
                 y += 1
+
+    # attach email subjects by the month they were sent
+    subjects_by_ym = {}  # (year,month) -> list of {subject, open, click}
+    for c in campaigns:
+        d = parse(c.get("send_date", ""))
+        if not d:
+            continue
+        subjects_by_ym.setdefault((d.year, d.month), []).append({
+            "subject": c.get("subject", ""),
+            "open_rate": c.get("open_rate"),
+            "click_rate": c.get("click_rate"),
+        })
 
     years = sorted(data.keys())
     months = {}
@@ -175,6 +257,7 @@ def _compute_monthly(sales, promos):
                     "orders": cell["orders"],
                     "days": cell["days"],
                     "promos": promo_by_ym.get((y, m), []),
+                    "subjects": subjects_by_ym.get((y, m), []),
                 }
     return {"years": years, "months": months}
 
@@ -236,6 +319,7 @@ def _compute_performance(sales, promos):
         out.append({
             "promo_name": p.get("promo_name"),
             "discount": p.get("discount"),
+            "notes": p.get("notes"),
             "start_date": p.get("start_date"),
             "end_date": p.get("end_date"),
             "is_major": p.get("is_major"),

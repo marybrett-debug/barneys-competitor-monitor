@@ -127,7 +127,7 @@ def fetch_payload(days=800):
     _attach_engagement(performance, campaigns)
 
     # ---- monthly year-over-year comparison ----
-    monthly = _compute_monthly(sales, promos, campaigns)
+    monthly = _compute_monthly(sales, promos)
 
     return {"sales": sales, "snapshots": snapshots,
             "launches": launches, "prices": prices,
@@ -172,11 +172,10 @@ def _attach_engagement(performance, campaigns):
         p["subjects"] = [c["subject"] for c in during]
 
 
-def _compute_monthly(sales, promos, campaigns=None):
-    """Aggregate revenue/orders by calendar month and attach the promo(s) and
-    email subjects that ran in that month. Returns {year: {month: {...}}}."""
+def _compute_monthly(sales, promos):
+    """Aggregate revenue/orders by calendar month and attach the promo(s) that
+    ran in that month. Returns {year: {month(1-12): {...}}} plus the year list."""
     from datetime import date as _date
-    campaigns = campaigns or []
 
     def parse(d):
         try:
@@ -196,35 +195,23 @@ def _compute_monthly(sales, promos, campaigns=None):
         cell["days"] += 1
 
     # attach promos: a promo belongs to a month if its window overlaps it
-    promo_by_ym = {}  # (year,month) -> list of {label, notes}
+    promo_by_ym = {}  # (year,month) -> set of names
     for p in promos:
         ps, pe = parse(p.get("start_date", "")), parse(p.get("end_date", ""))
         if not ps:
             continue
         pe = pe or ps
+        # walk each month the promo touches
         y, m = ps.year, ps.month
         while (y < pe.year) or (y == pe.year and m <= pe.month):
             label = p.get("promo_name", "")
             if p.get("discount"):
                 label += f" ({p['discount']})"
-            promo_by_ym.setdefault((y, m), []).append(
-                {"label": label, "notes": p.get("notes") or ""})
+            promo_by_ym.setdefault((y, m), []).append(label)
             m += 1
             if m > 12:
                 m = 1
                 y += 1
-
-    # attach email subjects by the month they were sent
-    subjects_by_ym = {}  # (year,month) -> list of {subject, open, click}
-    for c in campaigns:
-        d = parse(c.get("send_date", ""))
-        if not d:
-            continue
-        subjects_by_ym.setdefault((d.year, d.month), []).append({
-            "subject": c.get("subject", ""),
-            "open_rate": c.get("open_rate"),
-            "click_rate": c.get("click_rate"),
-        })
 
     years = sorted(data.keys())
     months = {}
@@ -238,7 +225,6 @@ def _compute_monthly(sales, promos, campaigns=None):
                     "orders": cell["orders"],
                     "days": cell["days"],
                     "promos": promo_by_ym.get((y, m), []),
-                    "subjects": subjects_by_ym.get((y, m), []),
                 }
     return {"years": years, "months": months}
 
@@ -300,7 +286,6 @@ def _compute_performance(sales, promos):
         out.append({
             "promo_name": p.get("promo_name"),
             "discount": p.get("discount"),
-            "notes": p.get("notes"),
             "start_date": p.get("start_date"),
             "end_date": p.get("end_date"),
             "is_major": p.get("is_major"),

@@ -351,3 +351,125 @@ def scrape_strain_prices(name, cfg):
     status = "ok" if observations else "warning"
     detail = "" if observations else "no prices parsed for tracked strains"
     return observations, status, detail
+
+
+# ---- Barney's Farm own special-offers page (weekly Wednesday scrape) --------
+
+SPECIAL_OFFERS_URL = "https://www.barneysfarm.com/us/special-offer-seeds"
+
+# offer phrases we recognize in product cards / labels
+OFFER_PATTERNS = [
+    (re.compile(r"buy\s*\d+\s*get\s*\d+\s*free", re.I), None),
+    (re.compile(r"\bbogo\b", re.I), "Buy 1 Get 1 Free"),
+    (re.compile(r"\d{1,2}\s*%\s*off", re.I), None),
+    (re.compile(r"double\s*free\s*seeds?", re.I), "Double Free Seeds"),
+    (re.compile(r"free\s*seeds?", re.I), "Free Seeds"),
+]
+
+
+def _detect_offer(text):
+    t = text or ""
+    for pat, label in OFFER_PATTERNS:
+        m = pat.search(t)
+        if m:
+            return label or m.group(0).strip()
+    return None
+
+
+def scrape_special_offers():
+    """Scrape the Barney's Farm US special-offers page and extract, per product:
+    strain name, the offer (BOGO / % off / free seeds), and price — flagging a
+    discount when a struck-through 'was' price is present alongside a lower price.
+
+    Strategy: pull the accessibility tree of product cards. Each card typically
+    has a product link (the strain name), price text, and sometimes a sale badge.
+    Layout-agnostic: we walk anchor elements that look like products and read the
+    surrounding text for offer + price. Logs a warning if nothing parses."""
+    offers = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+        page = browser.new_page(
+            user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/124.0 Safari/537.36"))
+        try:
+            page.goto(SPECIAL_OFFERS_URL, wait_until="networkidle", timeout=60000)
+            page.wait_for_timeout(3000)
+            # Try to read product cards via JS: gather blocks that have a product
+            # link plus price text. This selector list is broad on purpose.
+            cards = page.evaluate(r"""
+                () => {
+                  const out = [];
+                  // candidate product containers
+                  const sel = ['.product', '.product-miniature', '.js-product',
+                               '[class*=product]', 'article', 'li'];
+                  const seen = new Set();
+                  for (const s of sel) {
+                    document.querySelectorAll(s).forEach(el => {
+                      const link = el.querySelector('a[href*="seeds"], a[href*="product"], a[title]');
+                      if (!link) return;
+                      const name = (link.getAttribute('title') || link.innerText || '').trim();
+                      if (!name || name.length < 2 || name.length > 70) return;
+                      const txt = (el.innerText || '').trim();
+                      if (!txt) return;
+                      const key = name.toLowerCase();
+                      if (seen.has(key)) return;
+                      seen.add(key);
+                      out.push({name, text: txt.slice(0, 400)});
+                    });
+                  }
+                  return out;
+                }
+            """)
+            page_text = page.inner_text("body")
+        except Exception as e:
+            browser.close()
+            return [], "error", f"special-offers fetch failed: {e}"
+        browser.close()
+
+    # page-level offer (e.g. a sitewide banner) as a fallback offer per product
+    page_offer = _detect_offer(page_text)
+
+    for c in cards:
+        name = _clean(c.get("name", ""))
+        text = c.get("text", "")
+        low = name.lower()
+        # skip nav/category junk
+        if any(j in low for j in ["view all", "shop", "category", "login", "account",
+                                  "cart", "menu", "home", "filter", "sort", "sale",
+                                  "special offer", "seeds usa", "feminized seeds"]):
+            continue
+        # need at least one price to count it as a product offer
+        prices = [(_m.group(1), _m.group(2)) for _m in PRICE_RE.finditer(text)]
+        prices += [(_m.group(2), _m.group(1)) for _m in PRICE_TRAILING_RE.finditer(text)]
+        if not prices:
+            continue
+        # numeric prices
+        vals = []
+        cur_sym = None
+        for sym, num in prices:
+            try:
+                vals.append(float(num.replace(",", ".")))
+                cur_sym = cur_sym or sym
+            except ValueError:
+                pass
+        if not vals:
+            continue
+        # if two distinct prices, the higher is 'was', lower is current (discount)
+        price = min(vals)
+        was = max(vals) if len(set(vals)) > 1 else None
+        is_disc = was is not None and was > price
+        offer = _detect_offer(text) or page_offer
+        offers.append({
+            "strain": name,
+            "offer": offer,
+            "price": price,
+            "was_price": was,
+            "is_discounted": bool(is_disc),
+            "currency": cur_sym,
+            "source_url": SPECIAL_OFFERS_URL,
+        })
+
+    if not offers:
+        return [], "warning", "no special offers parsed (page layout may have changed)"
+    return offers, "ok", ""

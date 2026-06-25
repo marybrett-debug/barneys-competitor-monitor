@@ -350,3 +350,62 @@ def all_campaigns():
             ORDER BY send_date ASC
         """)
         return cur.fetchall()
+
+
+# ---- Barney's Farm own special-offers page (weekly Wednesday scrape) --------
+
+def init_special_offers_schema():
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS special_offers (
+                id            SERIAL PRIMARY KEY,
+                captured_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                strain        TEXT NOT NULL,
+                offer         TEXT,            -- e.g. "Buy 1 Get 1 Free", "30% off"
+                price         NUMERIC(10,2),   -- current/discounted price if shown
+                was_price     NUMERIC(10,2),   -- original price if a strikethrough shown
+                is_discounted BOOLEAN DEFAULT FALSE,
+                currency      TEXT,
+                source_url    TEXT
+            );
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_special_offers_time
+            ON special_offers (captured_at DESC);
+        """)
+        conn.commit()
+
+
+def insert_special_offer(strain, offer=None, price=None, was_price=None,
+                         is_discounted=False, currency=None, source_url=None,
+                         captured_at=None):
+    with get_conn() as conn, conn.cursor() as cur:
+        if captured_at:
+            cur.execute("""
+                INSERT INTO special_offers
+                  (captured_at, strain, offer, price, was_price, is_discounted, currency, source_url)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (captured_at, strain, offer, price, was_price, is_discounted, currency, source_url))
+        else:
+            cur.execute("""
+                INSERT INTO special_offers
+                  (strain, offer, price, was_price, is_discounted, currency, source_url)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+            """, (strain, offer, price, was_price, is_discounted, currency, source_url))
+        conn.commit()
+
+
+def latest_special_offers():
+    """Return the offers from the most recent capture date."""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT max(captured_at) AS m FROM special_offers")
+        row = cur.fetchone()
+        if not row or not row["m"]:
+            return []
+        cur.execute("""
+            SELECT strain, offer, price, was_price, is_discounted, currency, captured_at
+            FROM special_offers
+            WHERE captured_at = %s
+            ORDER BY strain ASC
+        """, (row["m"],))
+        return cur.fetchall()

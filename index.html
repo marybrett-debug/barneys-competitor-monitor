@@ -40,15 +40,13 @@
   .controls button.active{background:#fff;color:var(--green);font-weight:700;box-shadow:0 1px 2px rgba(0,0,0,.1)}
   .controls .lbl{font-size:12px;color:var(--muted);margin-right:2px}
   .bar-row{display:flex;align-items:center;gap:10px;margin:5px 0;font-size:13px}
-  .bar-row .nm{width:240px;flex:none;font-size:13px;line-height:1.25}
+  .bar-row .nm{width:200px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .bar-row .bar-wrap{flex:1;background:#f0ece6;border-radius:4px;height:20px;position:relative}
   .bar-row .bar{height:100%;border-radius:4px;background:var(--green)}
   .bar-row .bar.neg{background:#d9534f}
   .bar-row .val{width:70px;flex:none;text-align:right;font-weight:700}
   .perf-item{margin:8px 0;padding-bottom:8px;border-bottom:1px solid var(--line)}
   .perf-meta{display:flex;gap:14px;align-items:center;margin:3px 0 0 0;padding-left:2px}
-  .perf-detail{font-size:11px;color:#666;margin:3px 0 0 2px;line-height:1.4}
-  .perf-notes{font-size:11px;color:#444;margin:2px 0 0 2px;font-style:italic}
   .perf-meta .eng{font-size:12px;color:#666}
   .subj-toggle{font-size:11px;color:var(--orange-dark);cursor:pointer;user-select:none}
   .subjects{margin:5px 0 2px 12px;padding:6px 10px;background:#faf8f5;border-radius:6px}
@@ -115,15 +113,6 @@
       <tbody></tbody>
     </table>
     <div class="legend">Revenue total per month with the promo(s) that ran. <b>YoY</b> = change vs the prior year's same month. Months with no sales data are blank.</div>
-  </div>
-
-  <div class="card" id="offersCard" style="display:none">
-    <h2>Our current special offers <span id="offersDate" class="lbl"></span></h2>
-    <table id="offersTable">
-      <thead><tr><th>Strain</th><th>Offer</th><th>Price</th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <div class="legend">Scraped weekly (Wednesdays) from barneysfarm.com/us/special-offer-seeds. Discounted prices show the original struck through.</div>
   </div>
 
   <div class="card" id="priceCard" style="display:none">
@@ -309,23 +298,21 @@ function renderPerf(){
     const pill = p.is_major===false?'<span class=pill>minor</span>':'';
     const open = p.avg_open!=null?p.avg_open+"%":"—";
     const click = p.avg_click!=null?p.avg_click+"%":"—";
-    // full detail line: discount, dates, revenue, days, engagement
-    const dates = (p.start_date&&p.end_date) ? `${p.start_date} → ${p.end_date}` : (p.start_date||"");
-    const disc = p.discount ? `<b>${p.discount}</b> · ` : "";
-    const notesLine = p.notes ? `<div class="perf-notes">${(p.notes||"").replace(/</g,"&lt;")}</div>` : "";
-    const detail = `<div class="perf-detail">${disc}${dates} · ${p.days} days · ${fmtK(p.total_revenue)} total · avg ${p.during_avg?fmtK(p.during_avg):"—"}/day vs ${p.baseline_avg?fmtK(p.baseline_avg):"—"} baseline · 📧 ${open} open · ${click} click (${p.email_count||0} emails)</div>${notesLine}`;
-    // subjects always shown when present
+    const eng = `<div class="eng" title="avg across ${p.email_count||0} emails sent during this promo">📧 ${open} open · ${click} click</div>`;
+    // subjects expandable
     const subj = (p.subjects&&p.subjects.length)
-      ? `<div class="subjects">`+
-        p.subjects.map(s=>`<div class="subj-line">• ${(s||"").replace(/</g,"&lt;")}</div>`).join("")+`</div>`
+      ? `<div class="subjects" id="subj${i}" style="display:none">`+
+        p.subjects.map(s=>`<div class="subj-line">• ${s.replace(/</g,"&lt;")}</div>`).join("")+`</div>`
       : "";
+    const toggle = (p.subjects&&p.subjects.length)
+      ? `<span class="subj-toggle" onclick="var e=document.getElementById('subj${i}');e.style.display=e.style.display==='none'?'block':'none';this.textContent=e.style.display==='none'?'▸ ${p.subjects.length} emails':'▾ hide';">▸ ${p.subjects.length} emails</span>` : "";
     return `<div class="perf-item">
       <div class="bar-row" title="${tip}">
         <div class="nm">${p.promo_name}${pill}</div>
         <div class="bar-wrap"><div class="bar ${neg?'neg':''}" style="width:${w}%"></div></div>
         <div class="val" style="color:${neg?'#d9534f':'var(--green)'}">${val}</div>
       </div>
-      ${detail}
+      <div class="perf-meta">${eng} ${toggle}</div>
       ${subj}
     </div>`;
   }).join("");
@@ -344,34 +331,17 @@ function renderMonthly(){
   if(years.length>=2) head.insertAdjacentHTML("beforeend",`<th>YoY</th>`);
 
   const tb=document.querySelector("#monthlyTable tbody");
-  let uid=0;
   for(let m=1;m<=12;m++){
     const row = md.months[m] || {};
+    // skip months with no data in any year
     if(!years.some(y=>row[y])) continue;
     let tds=`<td><b>${monthNames[m-1]}</b></td>`;
     years.forEach(y=>{
       const c=row[y];
       if(!c){ tds+=`<td class=muted>—</td>`; return; }
-      const promoList = (c.promos && c.promos.length)
-        ? `<ul style="margin:4px 0 0;padding-left:16px;font-size:11px;color:var(--green)">`
-          + c.promos.map(pn=>{
-              const lab = (typeof pn==="string") ? pn : pn.label;
-              const nt = (typeof pn==="object" && pn.notes) ? `<div style="color:#777;font-style:italic;font-weight:400">${pn.notes.replace(/</g,"&lt;")}</div>` : "";
-              return `<li style="margin:3px 0">${lab}${nt}</li>`;
-            }).join("") + `</ul>`
-        : `<div class=muted style="font-size:11px">—</div>`;
-      const subs = c.subjects||[];
-      uid++;
-      const subToggle = subs.length
-        ? `<span class="subj-toggle" onclick="var e=document.getElementById('msub${uid}');e.style.display=e.style.display==='none'?'block':'none';">▸ ${subs.length} emails</span>` : "";
-      const subBlock = subs.length
-        ? `<div class="subjects" id="msub${uid}" style="display:none">`+
-          subs.map(s=>{
-            const o=s.open_rate!=null?` <span class=muted>(${s.open_rate}% open)</span>`:"";
-            return `<div class="subj-line">• ${(s.subject||"").replace(/</g,"&lt;")}${o}</div>`;
-          }).join("")+`</div>` : "";
+      const promo = c.promos && c.promos.length ? c.promos.join("; ") : "—";
       tds+=`<td><b>${fmtK(c.revenue)}</b><div class=muted style="font-size:11px">${c.orders} orders · ${c.days} days</div>`+
-           `${promoList}${subToggle}${subBlock}</td>`;
+           `<div style="font-size:11px;color:var(--green)">${promo}</div></td>`;
     });
     if(years.length>=2){
       const a=row[years[years.length-2]], b=row[years[years.length-1]];
@@ -388,30 +358,6 @@ function renderMonthly(){
 }
 
 function renderStatic(){
-  // our current special offers
-  const offers=DATA.special_offers||[];
-  if(offers.length){
-    document.getElementById("offersCard").style.display="block";
-    const when=offers[0].captured_at?(" — as of "+dayOf(offers[0].captured_at)):"";
-    document.getElementById("offersDate").textContent=when;
-    const otb=document.querySelector("#offersTable tbody");
-    offers.forEach(o=>{
-      const cur=o.currency||"$";
-      let priceCell="—";
-      if(o.price!=null){
-        if(o.is_discounted && o.was_price!=null){
-          priceCell=`<span style="color:#d9534f;text-decoration:line-through" class=muted>${cur}${Number(o.was_price).toFixed(2)}</span> `+
-                    `<b style="color:var(--green)">${cur}${Number(o.price).toFixed(2)}</b>`;
-        } else {
-          priceCell=`${cur}${Number(o.price).toFixed(2)}`;
-        }
-      }
-      const offerCell=o.offer?`<span style="color:var(--green);font-weight:600">${o.offer}</span>`:`<span class=muted>—</span>`;
-      otb.insertAdjacentHTML("beforeend",
-        `<tr><td><b>${o.strain}</b></td><td>${offerCell}</td><td>${priceCell}</td></tr>`);
-    });
-  }
-
   // price matrix
   const prices=DATA.prices||[];
   if(prices.length){
@@ -487,11 +433,6 @@ function promoOn(day){
   return "";
 }
 
-function emailOn(day){
-  const cs=DATA.campaigns||[];
-  return cs.filter(c=>dayOf(c.send_date)===day);
-}
-
 function drawMonth(month){
   const sales=(DATA.sales||[]).filter(s=>dayOf(s.sale_date).slice(0,7)===month)
                               .sort((a,b)=>dayOf(a.sale_date).localeCompare(dayOf(b.sale_date)));
@@ -499,21 +440,13 @@ function drawMonth(month){
   stb.innerHTML="";
   let rev=0, ord=0;
   sales.forEach(s=>{
-    const day=dayOf(s.sale_date);
     rev+=s.revenue==null?0:Number(s.revenue);
     ord+=s.orders==null?0:Number(s.orders);
-    const promo = promoOn(day) || (s.note||"").trim();
-    const emails = emailOn(day);
-    let promoHtml = promo ? `<div style="color:var(--green);font-weight:600">${promo}</div>` : "";
-    if(emails.length){
-      promoHtml += emails.map(e=>{
-        const o=e.open_rate!=null?` <span class=muted>(${e.open_rate}% open)</span>`:"";
-        return `<div style="font-size:11px;color:#555">📧 ${(e.subject||"").replace(/</g,"&lt;")}${o}</div>`;
-      }).join("");
-    }
-    const promoCell = promoHtml ? `<td>${promoHtml}</td>` : `<td class=muted></td>`;
+    const promo = promoOn(dayOf(s.sale_date)) || (s.note||"").trim();
+    const promoCell = promo
+      ? `<td style="color:var(--green);font-weight:600">${promo}</td>` : `<td class=muted></td>`;
     stb.insertAdjacentHTML("beforeend",
-      `<tr><td>${day}</td><td>${fmtMoney(s.revenue)}</td><td>${s.orders??"—"}</td><td>${s.units??"—"}</td>${promoCell}</tr>`);
+      `<tr><td>${dayOf(s.sale_date)}</td><td>${fmtMoney(s.revenue)}</td><td>${s.orders??"—"}</td><td>${s.units??"—"}</td>${promoCell}</tr>`);
   });
   const avg = sales.length? rev/sales.length : 0;
   document.getElementById("monthSummary").textContent =
