@@ -66,8 +66,8 @@ def fetch_payload(days=800):
         sales = _serialize(cur.fetchall())
 
         cur.execute("""
-            SELECT competitor, captured_at, discount_text, codes,
-                   free_seeds, shipping, content_hash
+            SELECT competitor, captured_at, headline, discount_text, codes,
+                   free_seeds, shipping, spend_tiers, promo_ends, content_hash
             FROM promo_snapshots
             WHERE captured_at >= %s
             ORDER BY captured_at ASC
@@ -122,17 +122,94 @@ def fetch_payload(days=800):
         except Exception:
             campaigns = []
 
+        # all special offers across weeks — grouped by capture day on the client
+        try:
+            cur.execute("""
+                SELECT strain, offer, price, was_price, is_discounted,
+                       currency, captured_at::date AS week
+                FROM special_offers
+                ORDER BY captured_at::date DESC, strain ASC
+            """)
+            special_offers = _serialize(cur.fetchall())
+        except Exception:
+            special_offers = []
+
     # ---- promo performance: avg daily revenue during vs baseline around it ----
     performance = _compute_performance(sales, promos)
     _attach_engagement(performance, campaigns)
 
+    # ---- current competitor state: latest snapshot per competitor ----
+    competitor_state = _latest_competitor_state(snapshots)
+
     # ---- monthly year-over-year comparison ----
-    monthly = _compute_monthly(sales, promos)
+    monthly = _compute_monthly(sales, promos, campaigns)
 
     return {"sales": sales, "snapshots": snapshots,
             "launches": launches, "prices": prices,
             "promos": promos, "performance": performance,
-            "monthly": monthly, "campaigns": campaigns}
+            "monthly": monthly, "campaigns": campaigns,
+            "special_offers": special_offers,
+            "competitor_state": competitor_state}
+
+
+def _latest_competitor_state(snapshots):
+    """Return the most recent snapshot for each competitor with all promo fields,
+    for the 'what is each competitor offering right now' table."""
+    latest = {}
+    for s in snapshots:
+        c = s.get("competitor")
+        if not c:
+            continue
+        prev = latest.get(c)
+        if prev is None or (s.get("captured_at") or "") > (prev.get("captured_at") or ""):
+            latest[c] = s
+    out = []
+    for c in sorted(latest.keys()):
+        s = latest[c]
+        out.append({
+            "competitor": c,
+            "captured_at": s.get("captured_at"),
+            "headline": s.get("headline"),
+            "discount_text": s.get("discount_text"),
+            "codes": s.get("codes"),
+            "free_seeds": s.get("free_seeds"),
+            "shipping": s.get("shipping"),
+            "spend_tiers": s.get("spend_tiers"),
+            "promo_ends": s.get("promo_ends"),
+        })
+    return out
+
+
+def _dedupe_subjects(subjects):
+    """Collapse near-duplicate / reminder subjects to distinct messaging.
+    Strips emojis and urgency framing, then keys on the offer mechanics (the
+    substantive part, often after a bullet/dash) so reminder sends of the same
+    promo with different openers collapse together. Preserves original order."""
+    import re as _re
+
+    def normalize(s):
+        core = (s or "").lower()
+        core = core.encode("ascii", "ignore").decode("ascii")
+        core = _re.sub(r"[^a-z0-9 ]", " ", core)
+        core = _re.sub(r"\s+", " ", core).strip()
+        # drop decorative / urgency / filler tokens so reminders match the launch
+        drop = {"last","chance","ends","end","tonight","midnight","monday","sunday",
+                "soon","final","hours","hour","hurry","left","dont","miss","happy",
+                "today","now","extended","offer","reminder","starts","start","live",
+                "our","is","the","a","an","for","your","you","x","plus","get","got",
+                "save","off"}
+        toks = [t for t in core.split() if t not in drop and len(t) > 1]
+        return " ".join(sorted(set(toks)))
+
+    seen = set()
+    out = []
+    for s in subjects:
+        key = normalize(s)
+        if key and key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    return out
 
 
 def _attach_engagement(performance, campaigns):
@@ -169,13 +246,14 @@ def _attach_engagement(performance, campaigns):
         p["email_count"] = len(during)
         p["avg_open"] = round(sum(opens) / len(opens), 1) if opens else None
         p["avg_click"] = round(sum(clicks) / len(clicks), 2) if clicks else None
-        p["subjects"] = [c["subject"] for c in during]
+        p["subjects"] = _dedupe_subjects([c["subject"] for c in during])
 
 
-def _compute_monthly(sales, promos):
-    """Aggregate revenue/orders by calendar month and attach the promo(s) that
-    ran in that month. Returns {year: {month(1-12): {...}}} plus the year list."""
+def _compute_monthly(sales, promos, campaigns=None):
+    """Aggregate revenue/orders by calendar month and attach the promo(s) and
+    email subjects that ran in that month. Returns {year: {month: {...}}}."""
     from datetime import date as _date
+    campaigns = campaigns or []
 
     def parse(d):
         try:
@@ -195,23 +273,35 @@ def _compute_monthly(sales, promos):
         cell["days"] += 1
 
     # attach promos: a promo belongs to a month if its window overlaps it
-    promo_by_ym = {}  # (year,month) -> set of names
+    promo_by_ym = {}  # (year,month) -> list of {label, notes}
     for p in promos:
         ps, pe = parse(p.get("start_date", "")), parse(p.get("end_date", ""))
         if not ps:
             continue
         pe = pe or ps
-        # walk each month the promo touches
         y, m = ps.year, ps.month
         while (y < pe.year) or (y == pe.year and m <= pe.month):
             label = p.get("promo_name", "")
             if p.get("discount"):
                 label += f" ({p['discount']})"
-            promo_by_ym.setdefault((y, m), []).append(label)
+            promo_by_ym.setdefault((y, m), []).append(
+                {"label": label, "notes": p.get("notes") or ""})
             m += 1
             if m > 12:
                 m = 1
                 y += 1
+
+    # attach email subjects by the month they were sent
+    subjects_by_ym = {}  # (year,month) -> list of {subject, open, click}
+    for c in campaigns:
+        d = parse(c.get("send_date", ""))
+        if not d:
+            continue
+        subjects_by_ym.setdefault((d.year, d.month), []).append({
+            "subject": c.get("subject", ""),
+            "open_rate": c.get("open_rate"),
+            "click_rate": c.get("click_rate"),
+        })
 
     years = sorted(data.keys())
     months = {}
@@ -225,6 +315,7 @@ def _compute_monthly(sales, promos):
                     "orders": cell["orders"],
                     "days": cell["days"],
                     "promos": promo_by_ym.get((y, m), []),
+                    "subjects": subjects_by_ym.get((y, m), []),
                 }
     return {"years": years, "months": months}
 
@@ -286,6 +377,7 @@ def _compute_performance(sales, promos):
         out.append({
             "promo_name": p.get("promo_name"),
             "discount": p.get("discount"),
+            "notes": p.get("notes"),
             "start_date": p.get("start_date"),
             "end_date": p.get("end_date"),
             "is_major": p.get("is_major"),

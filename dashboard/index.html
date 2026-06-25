@@ -141,6 +141,12 @@
     <div class="legend">Compared on <b>per-seed price</b> (pack price ÷ pack size). Lowest highlighted green. OOS = out of stock.</div>
   </div>
 
+  <div class="card" id="compStateCard" style="display:none">
+    <h2>What competitors are offering now</h2>
+    <div id="compState"></div>
+    <div class="legend">Most recent capture from each competitor's promo page(s). Compare against your own special offers above.</div>
+  </div>
+
   <div class="card" id="changeCard" style="display:none">
     <h2>Competitor promo changes</h2>
     <table id="changeTable"><thead><tr><th>Date</th><th>Site</th><th>What changed</th></tr></thead><tbody></tbody></table>
@@ -181,7 +187,7 @@ function detectChanges(snapshots){
       const day=dayOf(s.captured_at);
       if(prev && s.content_hash!==prev.content_hash && day!==prevDay){
         const fields={};
-        ["discount_text","codes","free_seeds","shipping"].forEach(k=>{
+        ["discount_text","codes","free_seeds","shipping","spend_tiers","promo_ends"].forEach(k=>{
           if((prev[k]||"")!==(s[k]||"")) fields[k]={from:prev[k]||"—",to:s[k]||"—"};
         });
         changes.push({date:day,site,fields});
@@ -501,6 +507,30 @@ function drawOfferWeek(week, weeks, byWeek){
   diffBox.innerHTML=h;
 }
 
+function renderCompState(){
+  const state=DATA.competitor_state||[];
+  if(!state.length) return;
+  document.getElementById("compStateCard").style.display="block";
+  const box=document.getElementById("compState");
+  const fields=[
+    ["discount_text","Discount"],["free_seeds","Free seeds"],
+    ["spend_tiers","Spend & get"],["codes","Codes"],
+    ["shipping","Shipping"],["promo_ends","Ends"],
+  ];
+  box.innerHTML = state.map(c=>{
+    const star = c.competitor===US ? "⭐ " : "";
+    const when = c.captured_at ? `<span class=muted style="font-weight:400;font-size:11px"> · ${dayOf(c.captured_at)}</span>` : "";
+    const head = c.headline ? `<div class=muted style="font-size:12px;margin:2px 0 6px;font-style:italic">${(c.headline||"").replace(/</g,"&lt;")}</div>` : "";
+    const rows = fields.filter(([k])=>c[k]).map(([k,label])=>
+      `<div style="font-size:12px;margin:2px 0"><b style="color:#555">${label}:</b> <span style="color:var(--green)">${(c[k]||"").replace(/</g,"&lt;")}</span></div>`
+    ).join("");
+    const body = rows || `<div class=muted style="font-size:12px">No active promo detected.</div>`;
+    return `<div style="border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:10px">
+      <div style="font-weight:700">${star}${c.competitor}${when}</div>${head}${body}
+    </div>`;
+  }).join("");
+}
+
 function renderStatic(){
   // special offers — weekly view (dropdown + diff + price grid)
   renderOffers();
@@ -539,8 +569,15 @@ function renderStatic(){
   if(!changes.length) ctb.innerHTML="<tr><td colspan=3 class=muted>No competitor promo changes detected yet.</td></tr>";
   changes.slice(0,40).forEach(c=>{
     const desc=Object.entries(c.fields).map(([k,v])=>{
-      const lbl={discount_text:"Discount",codes:"Codes",free_seeds:"Free seeds",shipping:"Shipping"}[k]||k;
-      return `<div><b>${lbl}:</b> <span class=muted>${v.from}</span> → ${v.to}</div>`;}).join("")||"<span class=muted>changed</span>";
+      const lbl={discount_text:"Discount",codes:"Codes",free_seeds:"Free seeds",
+                 shipping:"Shipping",spend_tiers:"Spend & get",promo_ends:"Ends"}[k]||k;
+      // plain-language framing: started / stopped / changed
+      let verb, body;
+      if(v.from==="—"){ verb=`<span style="color:var(--green)">started</span>`; body=v.to; }
+      else if(v.to==="—"){ verb=`<span style="color:#d9534f">stopped</span>`; body=v.from; }
+      else { verb="changed"; body=`<span class=muted>${v.from}</span> → ${v.to}`; }
+      return `<div style="margin:2px 0"><b>${lbl}</b> ${verb}: ${body}</div>`;
+    }).join("")||"<span class=muted>changed</span>";
     const site=c.site===US?`<span class="us">⭐ ${c.site}</span>`:c.site;
     ctb.insertAdjacentHTML("beforeend",`<tr class="chg"><td>${c.date}</td><td>${site}</td><td>${desc}</td></tr>`);
   });
@@ -640,6 +677,7 @@ function render(data){
   renderPerf();
   renderChart();
   renderMonthly();
+  renderCompState();
   renderStatic();
 }
 
