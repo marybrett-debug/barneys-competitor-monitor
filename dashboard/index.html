@@ -120,12 +120,19 @@
   </div>
 
   <div class="card" id="offersCard" style="display:none">
-    <h2>Our current special offers <span id="offersDate" class="lbl"></span></h2>
+    <h2>Special offers — weekly</h2>
+    <div class="controls">
+      <span class="lbl">Week:</span>
+      <select id="offerWeek" style="padding:6px 10px;border-radius:6px;border:1px solid var(--line);font-size:13px"></select>
+      <span id="offerSummary" class="lbl" style="margin-left:10px"></span>
+    </div>
     <table id="offersTable">
       <thead><tr><th>Strain</th><th>Offer</th><th>Price</th></tr></thead>
       <tbody></tbody>
     </table>
-    <div class="legend">Scraped weekly (Wednesdays) from barneysfarm.com/us/special-offer-seeds. Discounted prices show the original struck through.</div>
+    <div id="offerDiff" style="margin-top:14px"></div>
+    <div id="offerGridWrap" style="margin-top:18px;overflow-x:auto"></div>
+    <div class="legend">Scraped weekly (Wednesdays) from barneysfarm.com/us/special-offer-seeds. Pick a week to see its offers and what changed since the prior week; the grid below shows price history across recent weeks.</div>
   </div>
 
   <div class="card" id="priceCard" style="display:none">
@@ -392,30 +399,111 @@ function renderMonthly(){
   }
 }
 
-function renderStatic(){
-  // our current special offers
-  const offers=DATA.special_offers||[];
-  if(offers.length){
-    document.getElementById("offersCard").style.display="block";
-    const when=offers[0].captured_at?(" — as of "+dayOf(offers[0].captured_at)):"";
-    document.getElementById("offersDate").textContent=when;
-    const otb=document.querySelector("#offersTable tbody");
-    offers.forEach(o=>{
-      const cur=o.currency||"$";
-      let priceCell="—";
-      if(o.price!=null){
-        if(o.is_discounted && o.was_price!=null){
-          priceCell=`<span style="color:#d9534f;text-decoration:line-through" class=muted>${cur}${Number(o.was_price).toFixed(2)}</span> `+
-                    `<b style="color:var(--green)">${cur}${Number(o.price).toFixed(2)}</b>`;
-        } else {
-          priceCell=`${cur}${Number(o.price).toFixed(2)}`;
-        }
-      }
-      const offerCell=o.offer?`<span style="color:var(--green);font-weight:600">${o.offer}</span>`:`<span class=muted>—</span>`;
-      otb.insertAdjacentHTML("beforeend",
-        `<tr><td><b>${o.strain}</b></td><td>${offerCell}</td><td>${priceCell}</td></tr>`);
-    });
+function priceCellHTML(o){
+  const cur=o.currency||"$";
+  if(o.price==null) return "—";
+  if(o.is_discounted && o.was_price!=null){
+    return `<span style="color:#d9534f;text-decoration:line-through" class=muted>${cur}${Number(o.was_price).toFixed(2)}</span> `+
+           `<b style="color:var(--green)">${cur}${Number(o.price).toFixed(2)}</b>`;
   }
+  return `${cur}${Number(o.price).toFixed(2)}`;
+}
+
+function renderOffers(){
+  const all=DATA.special_offers||[];
+  if(!all.length) return;
+  document.getElementById("offersCard").style.display="block";
+
+  // group by week (captured date)
+  const byWeek={};
+  all.forEach(o=>{ const w=dayOf(o.week||o.captured_at); (byWeek[w] ||= []).push(o); });
+  const weeks=Object.keys(byWeek).sort().reverse();   // newest first
+
+  // populate dropdown once
+  const sel=document.getElementById("offerWeek");
+  if(!sel.dataset.filled){
+    sel.innerHTML=weeks.map(w=>`<option value="${w}">${w}</option>`).join("");
+    sel.dataset.filled="1";
+    sel.onchange=()=>drawOfferWeek(sel.value, weeks, byWeek);
+  }
+  drawOfferWeek(sel.value || weeks[0], weeks, byWeek);
+
+  // ---- price grid: strains (rows) x recent weeks (cols) ----
+  const recent=weeks.slice(0,8).reverse();   // up to 8 weeks, oldest->newest
+  const strains=[...new Set(all.map(o=>o.strain))].sort();
+  let gh=`<table style="font-size:12px"><thead><tr><th>Strain</th>`;
+  recent.forEach(w=> gh+=`<th>${w.slice(5)}</th>`);   // MM-DD
+  gh+=`</tr></thead><tbody>`;
+  // count how many weeks each strain appears, to sort sticky ones up
+  const freq={};
+  strains.forEach(s=> freq[s]=recent.filter(w=>byWeek[w].some(o=>o.strain===s)).length);
+  strains.sort((a,b)=> freq[b]-freq[a] || a.localeCompare(b));
+  strains.forEach(s=>{
+    gh+=`<tr><td><b>${s}</b> <span class=muted style="font-size:10px">${freq[s]}/${recent.length}</span></td>`;
+    recent.forEach(w=>{
+      const o=byWeek[w].find(x=>x.strain===s);
+      if(!o||o.price==null){ gh+=`<td class=muted>·</td>`; }
+      else {
+        const cur=o.currency||"$";
+        gh+=`<td>${cur}${Number(o.price).toFixed(2)}</td>`;
+      }
+    });
+    gh+=`</tr>`;
+  });
+  gh+=`</tbody></table>`;
+  document.getElementById("offerGridWrap").innerHTML=
+    `<div style="font-weight:600;font-size:13px;margin-bottom:6px">Discounted price by week <span class=muted style="font-weight:400">(sticky strains first; · = not on offer that week)</span></div>`+gh;
+}
+
+function drawOfferWeek(week, weeks, byWeek){
+  const offers=byWeek[week]||[];
+  const otb=document.querySelector("#offersTable tbody");
+  otb.innerHTML="";
+  offers.slice().sort((a,b)=>a.strain.localeCompare(b.strain)).forEach(o=>{
+    const offerCell=o.offer?`<span style="color:var(--green);font-weight:600">${o.offer}</span>`:`<span class=muted>—</span>`;
+    otb.insertAdjacentHTML("beforeend",
+      `<tr><td><b>${o.strain}</b></td><td>${offerCell}</td><td>${priceCellHTML(o)}</td></tr>`);
+  });
+  const disc=offers.filter(o=>o.is_discounted).length;
+  document.getElementById("offerSummary").textContent=
+    `${offers.length} strains on offer · ${disc} discounted`;
+
+  // ---- diff vs the prior week ----
+  const idx=weeks.indexOf(week);
+  const prevWeek = idx>=0 && idx < weeks.length-1 ? weeks[idx+1] : null;
+  const diffBox=document.getElementById("offerDiff");
+  if(!prevWeek){ diffBox.innerHTML=`<div class=muted style="font-size:12px">No earlier week to compare.</div>`; return; }
+  const prev=byWeek[prevWeek]||[];
+  const curNames=new Set(offers.map(o=>o.strain));
+  const prevNames=new Set(prev.map(o=>o.strain));
+  const added=offers.filter(o=>!prevNames.has(o.strain));
+  const dropped=prev.filter(o=>!curNames.has(o.strain));
+  const changed=[];
+  offers.forEach(o=>{
+    const p=prev.find(x=>x.strain===o.strain);
+    if(p && p.price!=null && o.price!=null && Number(p.price)!==Number(o.price)){
+      changed.push({strain:o.strain, from:Number(p.price), to:Number(o.price), cur:o.currency||"$"});
+    }
+  });
+  let h=`<div style="font-weight:600;font-size:13px;margin-bottom:6px">Changes vs ${prevWeek}</div>`;
+  if(!added.length && !dropped.length && !changed.length){
+    h+=`<div class=muted style="font-size:12px">No changes from the previous week.</div>`;
+  } else {
+    h+=`<div style="font-size:12px;line-height:1.7">`;
+    added.forEach(o=> h+=`<div><span style="color:var(--green)">＋ Added:</span> ${o.strain} (${priceCellHTML(o)})</div>`);
+    dropped.forEach(o=> h+=`<div><span style="color:#d9534f">－ Dropped:</span> ${o.strain}</div>`);
+    changed.forEach(c=>{
+      const dir=c.to<c.from?"↓":"↑"; const col=c.to<c.from?"var(--green)":"#d9534f";
+      h+=`<div><span style="color:${col}">${dir} Price:</span> ${c.strain} ${c.cur}${c.from.toFixed(2)} → ${c.cur}${c.to.toFixed(2)}</div>`;
+    });
+    h+=`</div>`;
+  }
+  diffBox.innerHTML=h;
+}
+
+function renderStatic(){
+  // special offers — weekly view (dropdown + diff + price grid)
+  renderOffers();
 
   // price matrix
   const prices=DATA.prices||[];

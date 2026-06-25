@@ -122,23 +122,15 @@ def fetch_payload(days=800):
         except Exception:
             campaigns = []
 
-        # latest special offers from our own page (match the most recent capture
-        # DAY — rows are inserted one-by-one with per-row timestamps, so an exact
-        # timestamp match would only return the last row)
+        # all special offers across weeks — grouped by capture day on the client
         try:
-            cur.execute("SELECT max(captured_at)::date AS d FROM special_offers")
-            mrow = cur.fetchone()
-            if mrow and mrow["d"]:
-                cur.execute("""
-                    SELECT strain, offer, price, was_price, is_discounted,
-                           currency, captured_at
-                    FROM special_offers
-                    WHERE captured_at::date = %s
-                    ORDER BY strain ASC
-                """, (mrow["d"],))
-                special_offers = _serialize(cur.fetchall())
-            else:
-                special_offers = []
+            cur.execute("""
+                SELECT strain, offer, price, was_price, is_discounted,
+                       currency, captured_at::date AS week
+                FROM special_offers
+                ORDER BY captured_at::date DESC, strain ASC
+            """)
+            special_offers = _serialize(cur.fetchall())
         except Exception:
             special_offers = []
 
