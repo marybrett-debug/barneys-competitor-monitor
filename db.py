@@ -396,16 +396,24 @@ def insert_special_offer(strain, offer=None, price=None, was_price=None,
 
 
 def latest_special_offers():
-    """Return the offers from the most recent capture date."""
+    """Return the offers from the most recent capture day."""
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT max(captured_at) AS m FROM special_offers")
+        cur.execute("SELECT max(captured_at)::date AS d FROM special_offers")
         row = cur.fetchone()
-        if not row or not row["m"]:
+        if not row or not row["d"]:
             return []
         cur.execute("""
             SELECT strain, offer, price, was_price, is_discounted, currency, captured_at
             FROM special_offers
-            WHERE captured_at = %s
+            WHERE captured_at::date = %s
             ORDER BY strain ASC
-        """, (row["m"],))
+        """, (row["d"],))
         return cur.fetchall()
+
+
+def clear_special_offers_today():
+    """Remove any special-offer rows captured today, so a same-day re-run
+    replaces rather than appends (avoids duplicate offers on the dashboard)."""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM special_offers WHERE captured_at::date = now()::date")
+        conn.commit()

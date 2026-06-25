@@ -378,13 +378,13 @@ def _detect_offer(text):
 
 def scrape_special_offers():
     """Scrape the Barney's Farm US special-offers page and extract, per product:
-    strain name, the offer (BOGO / % off / free seeds), and price — flagging a
-    discount when a struck-through 'was' price is present alongside a lower price.
+    strain name, the offer/discount badge, and prices.
 
-    Strategy: pull the accessibility tree of product cards. Each card typically
-    has a product link (the strain name), price text, and sometimes a sale badge.
-    Layout-agnostic: we walk anchor elements that look like products and read the
-    surrounding text for offer + price. Logs a warning if nothing parses."""
+    Page structure (Bagisto theme): each product is a `.product_block` containing
+    `.product_name` (strain), a badge like "Save 50% Special Offer", `.product_thc`,
+    and `.product_price` with text like "2 Prices From $15.00 $42.00" where the
+    first price is the discounted price and the second is the original.
+    """
     offers = []
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
@@ -395,71 +395,68 @@ def scrape_special_offers():
         try:
             page.goto(SPECIAL_OFFERS_URL, wait_until="networkidle", timeout=60000)
             page.wait_for_timeout(3000)
-            # Try to read product cards via JS: gather blocks that have a product
-            # link plus price text. This selector list is broad on purpose.
-            cards = page.evaluate(r"""
+            # Pull each product block's named parts directly.
+            cards = page.evaluate("""
                 () => {
                   const out = [];
-                  // candidate product containers
-                  const sel = ['.product', '.product-miniature', '.js-product',
-                               '[class*=product]', 'article', 'li'];
-                  const seen = new Set();
-                  for (const s of sel) {
-                    document.querySelectorAll(s).forEach(el => {
-                      const link = el.querySelector('a[href*="seeds"], a[href*="product"], a[title]');
-                      if (!link) return;
-                      const name = (link.getAttribute('title') || link.innerText || '').trim();
-                      if (!name || name.length < 2 || name.length > 70) return;
-                      const txt = (el.innerText || '').trim();
-                      if (!txt) return;
-                      const key = name.toLowerCase();
-                      if (seen.has(key)) return;
-                      seen.add(key);
-                      out.push({name, text: txt.slice(0, 400)});
-                    });
-                  }
+                  document.querySelectorAll('.product_block').forEach(el => {
+                    const q = (sel) => {
+                      const n = el.querySelector(sel);
+                      return n ? (n.innerText || '').trim() : '';
+                    };
+                    const name = q('.product_name');
+                    const price = q('.product_price');
+                    if (!name || !price) return;
+                    // the badge is usually the first short line of the block
+                    const firstLine = (el.innerText || '').split(String.fromCharCode(10))
+                                        .map(s => s.trim()).filter(Boolean)[0] || '';
+                    out.push({name: name, price_text: price, badge: firstLine,
+                              thc: q('.product_thc')});
+                  });
                   return out;
                 }
             """)
-            page_text = page.inner_text("body")
         except Exception as e:
             browser.close()
             return [], "error", f"special-offers fetch failed: {e}"
         browser.close()
 
-    # page-level offer (e.g. a sitewide banner) as a fallback offer per product
-    page_offer = _detect_offer(page_text)
-
     for c in cards:
         name = _clean(c.get("name", ""))
-        text = c.get("text", "")
-        low = name.lower()
-        # skip nav/category junk
-        if any(j in low for j in ["view all", "shop", "category", "login", "account",
-                                  "cart", "menu", "home", "filter", "sort", "sale",
-                                  "special offer", "seeds usa", "feminized seeds"]):
+        price_text = c.get("price_text", "")
+        badge = c.get("badge", "")
+        if not name:
             continue
-        # need at least one price to count it as a product offer
-        prices = [(_m.group(1), _m.group(2)) for _m in PRICE_RE.finditer(text)]
-        prices += [(_m.group(2), _m.group(1)) for _m in PRICE_TRAILING_RE.finditer(text)]
-        if not prices:
-            continue
-        # numeric prices
+
+        # parse all $-prices in the price line; first = discounted, second = original
+        nums = re.findall(r"[€£$]\s*(\d{1,4}(?:[.,]\d{2})?)", price_text)
         vals = []
-        cur_sym = None
-        for sym, num in prices:
+        for n in nums:
             try:
-                vals.append(float(num.replace(",", ".")))
-                cur_sym = cur_sym or sym
+                vals.append(float(n.replace(",", ".")))
             except ValueError:
                 pass
-        if not vals:
-            continue
-        # if two distinct prices, the higher is 'was', lower is current (discount)
-        price = min(vals)
-        was = max(vals) if len(set(vals)) > 1 else None
-        is_disc = was is not None and was > price
-        offer = _detect_offer(text) or page_offer
+        cur_sym = "$"
+        sym_m = re.search(r"[€£$]", price_text)
+        if sym_m:
+            cur_sym = sym_m.group(0)
+
+        price = was = None
+        is_disc = False
+        if len(vals) >= 2:
+            # "From $15.00 $42.00" -> discounted 15, original 42
+            price = min(vals)
+            was = max(vals)
+            is_disc = was > price
+        elif len(vals) == 1:
+            price = vals[0]
+
+        # offer: prefer the badge ("Save 50% Special Offer"), else detect from text
+        offer = None
+        if badge and badge.lower() != name.lower():
+            offer = _clean(badge)
+        offer = offer or _detect_offer(price_text) or _detect_offer(badge)
+
         offers.append({
             "strain": name,
             "offer": offer,

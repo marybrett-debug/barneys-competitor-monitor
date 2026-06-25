@@ -22,6 +22,7 @@ def do_special_offers():
     db.init_special_offers_schema()
     offers, status, detail = scrape_special_offers()
     if status == "ok":
+        db.clear_special_offers_today()   # replace any earlier run from today
         for o in offers:
             db.insert_special_offer(**o)
         disc = sum(1 for o in offers if o.get("is_discounted"))
