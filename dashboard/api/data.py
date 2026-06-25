@@ -122,21 +122,15 @@ def fetch_payload(days=800):
         except Exception:
             campaigns = []
 
-        # latest special offers from our own page
+        # all special offers across weeks — grouped by capture day on the client
         try:
-            cur.execute("SELECT max(captured_at) AS m FROM special_offers")
-            mrow = cur.fetchone()
-            if mrow and mrow["m"]:
-                cur.execute("""
-                    SELECT strain, offer, price, was_price, is_discounted,
-                           currency, captured_at
-                    FROM special_offers
-                    WHERE captured_at = %s
-                    ORDER BY strain ASC
-                """, (mrow["m"],))
-                special_offers = _serialize(cur.fetchall())
-            else:
-                special_offers = []
+            cur.execute("""
+                SELECT strain, offer, price, was_price, is_discounted,
+                       currency, captured_at::date AS week
+                FROM special_offers
+                ORDER BY captured_at::date DESC, strain ASC
+            """)
+            special_offers = _serialize(cur.fetchall())
         except Exception:
             special_offers = []
 
@@ -152,6 +146,38 @@ def fetch_payload(days=800):
             "promos": promos, "performance": performance,
             "monthly": monthly, "campaigns": campaigns,
             "special_offers": special_offers}
+
+
+def _dedupe_subjects(subjects):
+    """Collapse near-duplicate / reminder subjects to distinct messaging.
+    Strips emojis and urgency framing, then keys on the offer mechanics (the
+    substantive part, often after a bullet/dash) so reminder sends of the same
+    promo with different openers collapse together. Preserves original order."""
+    import re as _re
+
+    def normalize(s):
+        core = (s or "").lower()
+        core = core.encode("ascii", "ignore").decode("ascii")
+        core = _re.sub(r"[^a-z0-9 ]", " ", core)
+        core = _re.sub(r"\s+", " ", core).strip()
+        # drop decorative / urgency / filler tokens so reminders match the launch
+        drop = {"last","chance","ends","end","tonight","midnight","monday","sunday",
+                "soon","final","hours","hour","hurry","left","dont","miss","happy",
+                "today","now","extended","offer","reminder","starts","start","live",
+                "our","is","the","a","an","for","your","you","x","plus","get","got",
+                "save","off"}
+        toks = [t for t in core.split() if t not in drop and len(t) > 1]
+        return " ".join(sorted(set(toks)))
+
+    seen = set()
+    out = []
+    for s in subjects:
+        key = normalize(s)
+        if key and key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    return out
 
 
 def _attach_engagement(performance, campaigns):
@@ -188,7 +214,7 @@ def _attach_engagement(performance, campaigns):
         p["email_count"] = len(during)
         p["avg_open"] = round(sum(opens) / len(opens), 1) if opens else None
         p["avg_click"] = round(sum(clicks) / len(clicks), 2) if clicks else None
-        p["subjects"] = [c["subject"] for c in during]
+        p["subjects"] = _dedupe_subjects([c["subject"] for c in during])
 
 
 def _compute_monthly(sales, promos, campaigns=None):
