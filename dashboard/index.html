@@ -48,6 +48,7 @@
   .perf-item{margin:8px 0;padding-bottom:8px;border-bottom:1px solid var(--line)}
   .perf-meta{display:flex;gap:14px;align-items:center;margin:3px 0 0 0;padding-left:2px}
   .perf-detail{font-size:11px;color:#666;margin:3px 0 0 2px;line-height:1.4}
+  .perf-notes{font-size:11px;color:#444;margin:2px 0 0 2px;font-style:italic}
   .perf-meta .eng{font-size:12px;color:#666}
   .subj-toggle{font-size:11px;color:var(--orange-dark);cursor:pointer;user-select:none}
   .subjects{margin:5px 0 2px 12px;padding:6px 10px;background:#faf8f5;border-radius:6px}
@@ -302,7 +303,8 @@ function renderPerf(){
     // full detail line: discount, dates, revenue, days, engagement
     const dates = (p.start_date&&p.end_date) ? `${p.start_date} → ${p.end_date}` : (p.start_date||"");
     const disc = p.discount ? `<b>${p.discount}</b> · ` : "";
-    const detail = `<div class="perf-detail">${disc}${dates} · ${p.days} days · ${fmtK(p.total_revenue)} total · avg ${p.during_avg?fmtK(p.during_avg):"—"}/day vs ${p.baseline_avg?fmtK(p.baseline_avg):"—"} baseline · 📧 ${open} open · ${click} click (${p.email_count||0} emails)</div>`;
+    const notesLine = p.notes ? `<div class="perf-notes">${(p.notes||"").replace(/</g,"&lt;")}</div>` : "";
+    const detail = `<div class="perf-detail">${disc}${dates} · ${p.days} days · ${fmtK(p.total_revenue)} total · avg ${p.during_avg?fmtK(p.during_avg):"—"}/day vs ${p.baseline_avg?fmtK(p.baseline_avg):"—"} baseline · 📧 ${open} open · ${click} click (${p.email_count||0} emails)</div>${notesLine}`;
     // subjects always shown when present
     const subj = (p.subjects&&p.subjects.length)
       ? `<div class="subjects">`+
@@ -343,7 +345,11 @@ function renderMonthly(){
       if(!c){ tds+=`<td class=muted>—</td>`; return; }
       const promoList = (c.promos && c.promos.length)
         ? `<ul style="margin:4px 0 0;padding-left:16px;font-size:11px;color:var(--green)">`
-          + c.promos.map(pn=>`<li style="margin:2px 0">${pn}</li>`).join("") + `</ul>`
+          + c.promos.map(pn=>{
+              const lab = (typeof pn==="string") ? pn : pn.label;
+              const nt = (typeof pn==="object" && pn.notes) ? `<div style="color:#777;font-style:italic;font-weight:400">${pn.notes.replace(/</g,"&lt;")}</div>` : "";
+              return `<li style="margin:3px 0">${lab}${nt}</li>`;
+            }).join("") + `</ul>`
         : `<div class=muted style="font-size:11px">—</div>`;
       const subs = c.subjects||[];
       uid++;

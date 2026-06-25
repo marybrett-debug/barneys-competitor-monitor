@@ -196,7 +196,7 @@ def _compute_monthly(sales, promos, campaigns=None):
         cell["days"] += 1
 
     # attach promos: a promo belongs to a month if its window overlaps it
-    promo_by_ym = {}  # (year,month) -> list of names
+    promo_by_ym = {}  # (year,month) -> list of {label, notes}
     for p in promos:
         ps, pe = parse(p.get("start_date", "")), parse(p.get("end_date", ""))
         if not ps:
@@ -207,7 +207,8 @@ def _compute_monthly(sales, promos, campaigns=None):
             label = p.get("promo_name", "")
             if p.get("discount"):
                 label += f" ({p['discount']})"
-            promo_by_ym.setdefault((y, m), []).append(label)
+            promo_by_ym.setdefault((y, m), []).append(
+                {"label": label, "notes": p.get("notes") or ""})
             m += 1
             if m > 12:
                 m = 1
@@ -299,6 +300,7 @@ def _compute_performance(sales, promos):
         out.append({
             "promo_name": p.get("promo_name"),
             "discount": p.get("discount"),
+            "notes": p.get("notes"),
             "start_date": p.get("start_date"),
             "end_date": p.get("end_date"),
             "is_major": p.get("is_major"),
