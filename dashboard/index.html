@@ -813,7 +813,8 @@ function wireImport(){
     try{
       const fd=new FormData(); fd.append("file", file);
       const r=await fetch("/api/upload-sales",{method:"POST",body:fd});
-      const d=await r.json().catch(()=>({error:"bad response"}));
+      const txt=await r.text();
+      let d; try{ d=JSON.parse(txt); }catch(_){ d={error:(txt||"").slice(0,200)||("HTTP "+r.status)}; }
       if(!r.ok||d.error){ throw new Error(d.error||("HTTP "+r.status)); }
       status.style.color="var(--green)";
       status.textContent=`✓ Imported ${d.imported} days (${d.range||""}). Refreshing…`;

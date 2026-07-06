@@ -102,21 +102,22 @@ def _rows_from_xlsx(data):
 
 
 def _extract_file(content_type, body):
-    """Pull the uploaded file bytes + filename out of a multipart/form-data body."""
-    # crude but dependency-free multipart parse
+    """Pull the uploaded file bytes + filename out of a multipart/form-data body.
+    Uses the stdlib email parser, which handles the exact byte framing browsers
+    send (boundary matching, CRLFs, binary payloads) far more reliably than a
+    manual split."""
     if "boundary=" not in (content_type or ""):
         return None, None
-    boundary = content_type.split("boundary=")[1].strip()
-    delim = ("--" + boundary).encode()
-    parts = body.split(delim)
-    for part in parts:
-        if b"filename=" in part.split(b"\r\n\r\n")[0]:
-            head, _, payload = part.partition(b"\r\n\r\n")
-            fname = ""
-            for token in head.decode("utf-8", "ignore").split(";"):
-                if "filename=" in token:
-                    fname = token.split("filename=")[1].strip().strip('"')
-            payload = payload.rstrip(b"\r\n")
+    from email.parser import BytesParser
+    from email.policy import default as default_policy
+    # reconstruct a minimal MIME message: headers + blank line + body
+    header = ("Content-Type: " + content_type + "\r\n\r\n").encode()
+    msg = BytesParser(policy=default_policy).parsebytes(header + body)
+    for part in msg.iter_parts():
+        cd = part.get("Content-Disposition", "")
+        if "filename" in cd:
+            fname = part.get_filename() or ""
+            payload = part.get_payload(decode=True) or b""
             return fname, payload
     return None, None
 
@@ -137,6 +138,22 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
+
+    def do_GET(self):
+        # lets you sanity-check the endpoint in a browser; confirms it deployed
+        # and can reach the database
+        try:
+            conn = _get_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT count(*), min(sale_date), max(sale_date) FROM daily_sales")
+            n, lo, hi = cur.fetchone()
+            cur.close(); conn.close()
+            self._send(200, {"ok": True, "endpoint": "upload-sales",
+                             "message": "POST a CSV/Excel file here to import sales.",
+                             "current_rows": n,
+                             "range": f"{lo} .. {hi}" if lo else None})
+        except Exception as e:
+            self._send(500, {"error": f"DB check failed: {e}"})
 
     def do_POST(self):
         try:
