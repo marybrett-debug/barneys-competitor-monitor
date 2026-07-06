@@ -2,10 +2,12 @@
   "version": 2,
   "builds": [
     { "src": "api/data.py", "use": "@vercel/python" },
+    { "src": "api/upload-sales.py", "use": "@vercel/python" },
     { "src": "index.html", "use": "@vercel/static" }
   ],
   "routes": [
     { "src": "/api/data", "dest": "api/data.py" },
+    { "src": "/api/upload-sales", "dest": "api/upload-sales.py" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
