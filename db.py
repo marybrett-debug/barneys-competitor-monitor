@@ -29,11 +29,16 @@ def init_schema():
                 codes           TEXT,      -- comma-separated promo codes found
                 free_seeds      TEXT,      -- free-seed offer text
                 shipping        TEXT,      -- free shipping threshold text
+                spend_tiers     TEXT,      -- spend->reward ladder text
+                promo_ends      TEXT,      -- end date / countdown text
                 raw_text        TEXT,      -- full cleaned page text for fallback diffing
                 -- a stable hash of the meaningful content, used to detect change
                 content_hash    TEXT NOT NULL
             );
         """)
+        # Add new columns if upgrading an existing DB (no-op if already present)
+        cur.execute("ALTER TABLE promo_snapshots ADD COLUMN IF NOT EXISTS spend_tiers TEXT;")
+        cur.execute("ALTER TABLE promo_snapshots ADD COLUMN IF NOT EXISTS promo_ends TEXT;")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS scrape_health (
                 id            SERIAL PRIMARY KEY,
@@ -51,14 +56,16 @@ def init_schema():
 
 
 def insert_snapshot(row: dict):
+    row = {**{"spend_tiers": None, "promo_ends": None}, **row}
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
             INSERT INTO promo_snapshots
               (competitor, url, headline, discount_text, codes,
-               free_seeds, shipping, raw_text, content_hash)
+               free_seeds, shipping, spend_tiers, promo_ends, raw_text, content_hash)
             VALUES
               (%(competitor)s, %(url)s, %(headline)s, %(discount_text)s, %(codes)s,
-               %(free_seeds)s, %(shipping)s, %(raw_text)s, %(content_hash)s)
+               %(free_seeds)s, %(shipping)s, %(spend_tiers)s, %(promo_ends)s,
+               %(raw_text)s, %(content_hash)s)
         """, row)
         conn.commit()
 
@@ -160,3 +167,253 @@ def all_snapshots_between(start_iso: str, end_iso: str):
             ORDER BY captured_at ASC
         """, (start_iso, end_iso))
         return cur.fetchall()
+
+
+# ---- Product launches + competitor pricing (medium-tier scrape) -------------
+
+def init_intel_schema():
+    """Tables for new-product detection and head-to-head price tracking."""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS product_listings (
+                id           SERIAL PRIMARY KEY,
+                competitor   TEXT NOT NULL,
+                product_name TEXT NOT NULL,
+                first_seen   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                last_seen    TIMESTAMPTZ NOT NULL DEFAULT now(),
+                source_url   TEXT,
+                UNIQUE (competitor, product_name)
+            );
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS price_observations (
+                id           SERIAL PRIMARY KEY,
+                competitor   TEXT NOT NULL,
+                strain       TEXT NOT NULL,       -- normalized strain key we track
+                product_name TEXT,                -- as listed on their site
+                price        NUMERIC(10,2),
+                currency     TEXT,
+                pack_size    TEXT,                -- e.g. "5 seeds" if detected
+                per_seed     NUMERIC(10,2),       -- price / pack count, the fair comparison
+                in_stock     BOOLEAN,
+                observed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                source_url   TEXT
+            );
+        """)
+        cur.execute("ALTER TABLE price_observations ADD COLUMN IF NOT EXISTS per_seed NUMERIC(10,2);")
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_price_strain_time
+            ON price_observations (strain, competitor, observed_at DESC);
+        """)
+        conn.commit()
+
+
+def upsert_product(competitor, product_name, source_url=None):
+    """Record a product listing. Returns True if it's NEW (first time seen)."""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO product_listings (competitor, product_name, source_url)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (competitor, product_name)
+            DO UPDATE SET last_seen = now()
+            RETURNING (xmax = 0) AS inserted
+        """, (competitor, product_name, source_url))
+        return cur.fetchone()["inserted"]
+
+
+def insert_price(competitor, strain, product_name, price, currency,
+                 pack_size=None, per_seed=None, in_stock=None, source_url=None):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO price_observations
+              (competitor, strain, product_name, price, currency,
+               pack_size, per_seed, in_stock, source_url)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (competitor, strain, product_name, price, currency,
+              pack_size, per_seed, in_stock, source_url))
+        conn.commit()
+
+
+def new_products_since(since_iso: str):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT competitor, product_name, first_seen, source_url
+            FROM product_listings
+            WHERE first_seen >= %s
+            ORDER BY first_seen DESC
+        """, (since_iso,))
+        return cur.fetchall()
+
+
+def latest_prices_by_strain():
+    """Most recent price per (strain, competitor) for the dashboard table."""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT DISTINCT ON (strain, competitor)
+                   strain, competitor, product_name, price, currency,
+                   pack_size, per_seed, in_stock, observed_at, source_url
+            FROM price_observations
+            ORDER BY strain, competitor, observed_at DESC
+        """)
+        return cur.fetchall()
+
+
+# ---- Our own historical promo windows (manual CSV import) -------------------
+
+def init_promo_schema():
+    """Barney's Farm historical promo windows — drawn as bands on the dashboard.
+    Keyed by (start_date, promo_name) so re-importing updates rather than dupes."""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS barneys_promos (
+                id          SERIAL PRIMARY KEY,
+                start_date  DATE NOT NULL,
+                end_date    DATE,
+                promo_name  TEXT NOT NULL,
+                discount    TEXT,
+                notes       TEXT,
+                is_major    BOOLEAN DEFAULT TRUE,
+                UNIQUE (start_date, promo_name)
+            );
+        """)
+        cur.execute("ALTER TABLE barneys_promos ADD COLUMN IF NOT EXISTS is_major BOOLEAN DEFAULT TRUE;")
+        conn.commit()
+
+
+def upsert_barneys_promo(start_date, end_date, promo_name, discount=None,
+                         notes=None, is_major=True):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO barneys_promos
+                (start_date, end_date, promo_name, discount, notes, is_major)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (start_date, promo_name) DO UPDATE SET
+                end_date = EXCLUDED.end_date,
+                discount = EXCLUDED.discount,
+                notes    = EXCLUDED.notes,
+                is_major = EXCLUDED.is_major
+        """, (start_date, end_date, promo_name, discount, notes, is_major))
+        conn.commit()
+
+
+def all_barneys_promos():
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT start_date, end_date, promo_name, discount, notes, is_major
+            FROM barneys_promos
+            ORDER BY start_date ASC
+        """)
+        return cur.fetchall()
+
+
+# ---- Klaviyo email campaigns (engagement + subjects) ------------------------
+
+def init_klaviyo_schema():
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS klaviyo_campaigns (
+                id            SERIAL PRIMARY KEY,
+                send_date     DATE NOT NULL,
+                subject       TEXT NOT NULL,
+                campaign_name TEXT,
+                open_rate     NUMERIC(6,2),
+                click_rate    NUMERIC(6,2),
+                recipients    INTEGER,
+                unsubscribes  INTEGER,
+                UNIQUE (send_date, subject)
+            );
+        """)
+        conn.commit()
+
+
+def upsert_campaign(send_date, subject, campaign_name=None, open_rate=None,
+                    click_rate=None, recipients=None, unsubscribes=None):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO klaviyo_campaigns
+              (send_date, subject, campaign_name, open_rate, click_rate, recipients, unsubscribes)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (send_date, subject) DO UPDATE SET
+              campaign_name=EXCLUDED.campaign_name, open_rate=EXCLUDED.open_rate,
+              click_rate=EXCLUDED.click_rate, recipients=EXCLUDED.recipients,
+              unsubscribes=EXCLUDED.unsubscribes
+        """, (send_date, subject, campaign_name, open_rate, click_rate, recipients, unsubscribes))
+        conn.commit()
+
+
+def all_campaigns():
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT send_date, subject, campaign_name, open_rate, click_rate,
+                   recipients, unsubscribes
+            FROM klaviyo_campaigns
+            ORDER BY send_date ASC
+        """)
+        return cur.fetchall()
+
+
+# ---- Barney's Farm own special-offers page (weekly Wednesday scrape) --------
+
+def init_special_offers_schema():
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS special_offers (
+                id            SERIAL PRIMARY KEY,
+                captured_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                strain        TEXT NOT NULL,
+                offer         TEXT,            -- e.g. "Buy 1 Get 1 Free", "30% off"
+                price         NUMERIC(10,2),   -- current/discounted price if shown
+                was_price     NUMERIC(10,2),   -- original price if a strikethrough shown
+                is_discounted BOOLEAN DEFAULT FALSE,
+                currency      TEXT,
+                source_url    TEXT
+            );
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_special_offers_time
+            ON special_offers (captured_at DESC);
+        """)
+        conn.commit()
+
+
+def insert_special_offer(strain, offer=None, price=None, was_price=None,
+                         is_discounted=False, currency=None, source_url=None,
+                         captured_at=None):
+    with get_conn() as conn, conn.cursor() as cur:
+        if captured_at:
+            cur.execute("""
+                INSERT INTO special_offers
+                  (captured_at, strain, offer, price, was_price, is_discounted, currency, source_url)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (captured_at, strain, offer, price, was_price, is_discounted, currency, source_url))
+        else:
+            cur.execute("""
+                INSERT INTO special_offers
+                  (strain, offer, price, was_price, is_discounted, currency, source_url)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+            """, (strain, offer, price, was_price, is_discounted, currency, source_url))
+        conn.commit()
+
+
+def latest_special_offers():
+    """Return the offers from the most recent capture day."""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT max(captured_at)::date AS d FROM special_offers")
+        row = cur.fetchone()
+        if not row or not row["d"]:
+            return []
+        cur.execute("""
+            SELECT strain, offer, price, was_price, is_discounted, currency, captured_at
+            FROM special_offers
+            WHERE captured_at::date = %s
+            ORDER BY strain ASC
+        """, (row["d"],))
+        return cur.fetchall()
+
+
+def clear_special_offers_today():
+    """Remove any special-offer rows captured today, so a same-day re-run
+    replaces rather than appends (avoids duplicate offers on the dashboard)."""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM special_offers WHERE captured_at::date = now()::date")
+        conn.commit()

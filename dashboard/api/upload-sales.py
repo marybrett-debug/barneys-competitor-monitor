@@ -1,0 +1,186 @@
+"""
+Vercel serverless endpoint: POST /api/upload-sales
+Accepts a sales-per-day file (CSV or Excel) uploaded from the dashboard and
+writes it into the daily_sales table. Handles the Bagisto "Sales Per Day"
+export format (semicolon-delimited, DD-MM-YYYY dates, Net Total = revenue)
+as well as the already-converted format (comma, YYYY-MM-DD, revenue column).
+
+Returns JSON: {"ok": true, "imported": N, "range": "start..end"} or {"error": ...}
+"""
+import os
+import io
+import csv
+import json
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler
+
+import psycopg2
+
+
+def _get_conn():
+    url = os.environ["DATABASE_URL"]
+    if "sslmode=" not in url:
+        url += ("&" if "?" in url else "?") + "sslmode=require"
+    return psycopg2.connect(url)
+
+
+def _parse_date(s):
+    s = (s or "").strip()
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%m/%d/%Y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(s[:10], fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _num(s):
+    s = str(s or "").replace(",", "").replace("$", "").replace("€", "").replace("£", "").strip()
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _rows_from_csv(text):
+    """Yield (date, revenue, orders) from CSV text in either Bagisto or converted format."""
+    lines = text.splitlines()
+    # strip Bagisto "sep=;" preamble
+    if lines and lines[0].lower().startswith("sep="):
+        lines = lines[1:]
+    if not lines:
+        return
+    # detect delimiter from header
+    header = lines[0]
+    delim = ";" if header.count(";") >= header.count(",") else ","
+    reader = csv.DictReader(lines, delimiter=delim)
+    reader.fieldnames = [(h or "").strip() for h in (reader.fieldnames or [])]
+    fields = {f.lower(): f for f in reader.fieldnames}
+    # map columns flexibly
+    date_col = fields.get("date")
+    rev_col = fields.get("net total") or fields.get("revenue") or fields.get("net")
+    ord_col = fields.get("sales") or fields.get("orders")
+    for row in reader:
+        row = {(k or "").strip(): v for k, v in row.items()}
+        d = _parse_date(row.get(date_col, "")) if date_col else None
+        if not d:
+            continue
+        rev = _num(row.get(rev_col, "")) if rev_col else None
+        orders = _num(row.get(ord_col, "")) if ord_col else None
+        yield d, rev, int(orders) if orders is not None else None
+
+
+def _rows_from_xlsx(data):
+    """Yield (date, revenue, orders) from an .xlsx byte payload using openpyxl."""
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    ws = wb.active
+    rows = ws.iter_rows(values_only=True)
+    header = None
+    for r in rows:
+        if r is None:
+            continue
+        cells = [str(c).strip() if c is not None else "" for c in r]
+        low = [c.lower() for c in cells]
+        if header is None:
+            if "date" in low:
+                header = low
+                idx_date = low.index("date")
+                idx_rev = next((low.index(x) for x in ("net total", "revenue", "net") if x in low), None)
+                idx_ord = next((low.index(x) for x in ("sales", "orders") if x in low), None)
+            continue
+        if idx_date >= len(r):
+            continue
+        d = _parse_date(str(r[idx_date])) if r[idx_date] is not None else None
+        if not d:
+            continue
+        rev = _num(r[idx_rev]) if (idx_rev is not None and idx_rev < len(r)) else None
+        orders = _num(r[idx_ord]) if (idx_ord is not None and idx_ord < len(r)) else None
+        yield d, rev, int(orders) if orders is not None else None
+
+
+def _extract_file(content_type, body):
+    """Pull the uploaded file bytes + filename out of a multipart/form-data body."""
+    # crude but dependency-free multipart parse
+    if "boundary=" not in (content_type or ""):
+        return None, None
+    boundary = content_type.split("boundary=")[1].strip()
+    delim = ("--" + boundary).encode()
+    parts = body.split(delim)
+    for part in parts:
+        if b"filename=" in part.split(b"\r\n\r\n")[0]:
+            head, _, payload = part.partition(b"\r\n\r\n")
+            fname = ""
+            for token in head.decode("utf-8", "ignore").split(";"):
+                if "filename=" in token:
+                    fname = token.split("filename=")[1].strip().strip('"')
+            payload = payload.rstrip(b"\r\n")
+            return fname, payload
+    return None, None
+
+
+class handler(BaseHTTPRequestHandler):
+    def _send(self, code, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def do_POST(self):
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length)
+            ctype = self.headers.get("Content-Type", "")
+            fname, payload = _extract_file(ctype, body)
+            if not payload:
+                return self._send(400, {"error": "No file found in upload."})
+
+            name = (fname or "").lower()
+            if name.endswith(".xlsx") or name.endswith(".xlsm"):
+                rows = list(_rows_from_xlsx(payload))
+            else:
+                # assume CSV/text
+                text = payload.decode("utf-8-sig", "ignore")
+                rows = list(_rows_from_csv(text))
+
+            if not rows:
+                return self._send(400, {"error": "No valid sales rows found. Expected a Date column and a Net Total/Revenue column."})
+
+            conn = _get_conn()
+            cur = conn.cursor()
+            n = 0
+            for d, rev, orders in rows:
+                cur.execute("""
+                    INSERT INTO daily_sales (sale_date, revenue, orders, updated_at)
+                    VALUES (%s, %s, %s, now())
+                    ON CONFLICT (sale_date) DO UPDATE SET
+                      revenue = EXCLUDED.revenue,
+                      orders  = COALESCE(EXCLUDED.orders, daily_sales.orders),
+                      updated_at = now()
+                """, (d.isoformat(), rev, orders))
+                n += 1
+            conn.commit()
+            cur.close()
+            conn.close()
+
+            ds = sorted(r[0] for r in rows)
+            return self._send(200, {
+                "ok": True, "imported": n,
+                "range": f"{ds[0].isoformat()} .. {ds[-1].isoformat()}",
+            })
+        except KeyError:
+            return self._send(500, {"error": "DATABASE_URL not configured on the server."})
+        except Exception as e:
+            return self._send(500, {"error": f"Import failed: {e}"})

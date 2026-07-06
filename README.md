@@ -11,9 +11,14 @@ Postgres for storage, cron schedules for timing.
 
 ## What it does
 
-- **Daily** (`python main.py scrape`): fetches each competitor's promo page with
-  a headless browser, extracts discounts / codes / free-seed offers / shipping
-  thresholds, and writes a timestamped snapshot to Postgres. Builds history over time.
+- **Daily** (`python main.py scrape`): three passes per run —
+  (a) **promo pages**: discounts, codes, free-seed offers, shipping, plus
+  **spend-threshold tiers** and **promo end dates**;
+  (b) **new product launches**: scrapes each competitor's new-arrivals page and
+  flags products it hasn't seen before;
+  (c) **head-to-head strain prices**: searches each site for the strains in
+  `TRACKED_STRAINS` and records the listed price + stock status.
+  Everything is timestamped into Postgres to build history.
 - **Weekly** (`python main.py report`): compares the two most recent snapshots per
   competitor and posts a summary to **Slack** (incoming webhook).
 - **Sales upload** (`python import_sales.py sales.csv`): loads your daily sales
@@ -123,7 +128,16 @@ The dashboard is **read-only** — it never writes to the database.
   a health warning in the weekly Slack post rather than silent failure — that's your
   cue to check the URL/signals for that competitor.
 - **Adding a competitor**: add an entry to `COMPETITORS` in `scraper.py` with its
-  promo URL and a few expected keyword `signals`. No other changes needed.
+  promo URL, a few expected keyword `signals`, and optionally a `new_url` for its
+  new-arrivals page. No other changes needed.
+- **Tracking different strains**: edit the `TRACKED_STRAINS` list in `scraper.py`.
+  These are the head-to-head strains the price scraper searches for on each site.
+- **Heavier scrape = more exposure**: the medium tier now hits ~3 pages + several
+  search queries per competitor per day. That's more traffic than the original
+  single-page scrape, so it's more likely to trip bot-detection and leans harder on
+  each site's ToS. Prices/launches are parsed heuristically and will be the first
+  things to break when a site changes layout — they log health warnings rather than
+  failing silently, but expect to tune the selectors/patterns occasionally.
 - **Reading correlation carefully**: the dashboard shows *timing alignment*, not
   proof of cause. A sales bump during a promo is suggestive, but seasonality, paid
   ads, and competitor moves overlap. Treat it as a hypothesis generator, not a verdict.
