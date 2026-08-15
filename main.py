@@ -102,7 +102,7 @@ def main():
         do_special_offers()
     elif mode == "pull_klaviyo":
         from klaviyo_core import run_pull
-        result = run_pull(source="cron")
+        result = run_pull(source="cron", days=120)
         print(f"[ok] klaviyo pull: {result['imported']} US campaigns, "
               f"{result['promos_added']} promos derived "
               f"({result.get('range') or 'no dates'})")
