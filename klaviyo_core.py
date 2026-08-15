@@ -79,7 +79,7 @@ def query_supermetrics(api_key, start_date, end_date):
     req = urllib.request.Request(SUPERMETRICS_URL, data=data, method="POST")
     req.add_header("Content-Type", "application/json; charset=utf-8")
     req.add_header("Authorization", "Bearer " + api_key)
-    with urllib.request.urlopen(req, timeout=120) as resp:
+    with urllib.request.urlopen(req, timeout=300) as resp:
         payload = json.loads(resp.read().decode("utf-8"))
     rows = None
     if isinstance(payload, dict):
