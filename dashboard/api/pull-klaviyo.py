@@ -265,10 +265,16 @@ class handler(BaseHTTPRequestHandler):
                 # rates arrive as decimals (0.51) -> store as percent (51.0)
                 orate = _num(r[i_open]) if i_open is not None and i_open < len(r) else None
                 crate = _num(r[i_click]) if i_click is not None and i_click < len(r) else None
-                if orate is not None:
-                    orate = round(orate * 100, 2)
-                if crate is not None:
-                    crate = round(crate * 100, 2)
+                def _pct(v):
+                    if v is None: return None
+                    try: v=float(v)
+                    except (TypeError,ValueError): return None
+                    if v<=1.0: v=v*100.0
+                    if v<0: v=0.0
+                    if v>100: v=100.0
+                    return round(v,2)
+                orate = _pct(orate)
+                crate = _pct(crate)
                 rec = _int(r[i_rec]) if i_rec is not None and i_rec < len(r) else None
                 cur.execute("""
                     INSERT INTO klaviyo_campaigns
