@@ -100,8 +100,14 @@ def main():
         run_report()
     elif mode == "special_offers":
         do_special_offers()
+    elif mode == "pull_klaviyo":
+        from klaviyo_core import run_pull
+        result = run_pull(source="cron")
+        print(f"[ok] klaviyo pull: {result['imported']} US campaigns, "
+              f"{result['promos_added']} promos derived "
+              f"({result.get('range') or 'no dates'})")
     else:
-        print(f"Unknown mode: {mode}. Use 'scrape', 'report', or 'special_offers'.")
+        print(f"Unknown mode: {mode}. Use 'scrape', 'report', 'special_offers', or 'pull_klaviyo'.")
         sys.exit(1)
 
 
