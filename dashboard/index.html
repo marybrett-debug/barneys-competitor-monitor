@@ -70,9 +70,8 @@
     <h1>BARNEY'S FARM</h1>
     <p>Promo &amp; Sales Intelligence · Higher and Higher</p>
   </div>
-  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.0.0</span>
+  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.2.0</span>
 </header>
-<script>window.APP_VERSION="v1.0.0";</script>
 
 <div class="wrap">
   <div id="status" class="loading">Loading data…</div>
@@ -83,19 +82,39 @@
   </div>
 
   <div id="tabOwn">
+  <div class="card" id="kpiCard" style="display:none;padding:0;overflow:hidden">
+    <div id="kpiStrip" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0"></div>
+  </div>
   <!-- PROMO PERFORMANCE: the headline view -->
   <div class="card" id="perfCard" style="display:none">
     <h2>Promo performance — revenue lift vs. surrounding weeks</h2>
-    <div class="controls">
+    <div class="controls" style="flex-wrap:wrap;gap:10px">
       <span class="lbl">Show:</span>
       <div class="grp" id="perfScope">
-        <button data-scope="major" class="active">Major campaigns</button>
-        <button data-scope="all">All promos</button>
+        <button data-scope="major" class="active">Major</button>
+        <button data-scope="all">All</button>
       </div>
+      <span class="lbl" style="margin-left:6px">Year:</span>
+      <select id="perfYear" style="padding:5px 9px;border-radius:6px;border:1px solid var(--line);font-size:13px"></select>
+      <span class="lbl" style="margin-left:6px">Rank:</span>
+      <div class="grp" id="perfRank">
+        <button data-rank="all" class="active">All</button>
+        <button data-rank="top">Top 10</button>
+        <button data-rank="bottom">Bottom 10</button>
+      </div>
+      <span class="lbl" style="margin-left:6px">Sort:</span>
+      <select id="perfSort" style="padding:5px 9px;border-radius:6px;border:1px solid var(--line);font-size:13px">
+        <option value="lift">By lift</option>
+        <option value="revenue">By revenue</option>
+        <option value="roi">By efficiency (lift × engagement)</option>
+        <option value="date">By date</option>
+        <option value="open">By email open</option>
+      </select>
     </div>
     <div id="perfBars"></div>
     <div class="legend">Lift = avg daily revenue <b>during</b> the promo vs. the 14 days before &amp; after.
-      Bars ranked best to worst. Hover a row for detail.</div>
+      Hover a row for detail. Use the filters to slice by year, rank, or sort order.</div>
+    <div class="legend" id="perfCount" style="font-weight:600"></div>
   </div>
 
   <div class="card" id="chartCard" style="display:none">
@@ -190,13 +209,24 @@
 
   <div id="tabOwn2">
   <div class="card" id="salesCard" style="display:none">
-    <h2>Daily sales by month</h2>
+    <h2>Sales by month</h2>
     <div class="controls">
       <span class="lbl">Month:</span>
       <select id="monthSelect" style="padding:6px 10px;border-radius:6px;border:1px solid var(--line);font-size:13px"></select>
+      <span class="lbl" style="margin-left:10px">View:</span>
+      <div class="grp" id="salesAggCtl">
+        <button data-sagg="week" class="active">Weekly</button>
+        <button data-sagg="day">Daily</button>
+      </div>
       <span id="monthSummary" class="lbl" style="margin-left:10px"></span>
     </div>
-    <table id="salesTable"><thead><tr><th>Date</th><th>Revenue</th><th>Orders</th><th>Units</th><th>Promo running</th></tr></thead><tbody></tbody></table>
+    <table id="salesTable"><thead><tr><th>Period</th><th>Revenue</th><th>Orders</th><th>Units</th><th>Promo running</th></tr></thead><tbody></tbody></table>
+  </div>
+
+  <div class="card" id="engageCard" style="display:none">
+    <h2>Email engagement over time</h2>
+    <div id="engageChart"></div>
+    <div class="legend">Average campaign open &amp; click rate per month (from Klaviyo). Rising open rates mean your subject lines and list health are improving.</div>
   </div>
   </div><!-- /tabOwn2 -->
 </div>
@@ -208,6 +238,10 @@ let chart = null;
 let rangeMode = "2026";    // all | 2025 | 2026 | 180
 let aggMode = "week";      // day | week
 let perfScope = "major";   // major | all
+let perfYear = "all";      // all | 2024 | 2025 | 2026
+let perfRank = "all";      // all | top | bottom
+let perfSort = "lift";     // lift | revenue | date | open
+let salesAgg = "week";     // week | day  (Sales by month view)
 
 function dayOf(iso){ return (iso||"").slice(0,10); }
 function fmtMoney(v){ return v==null?"—":"$"+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
@@ -345,10 +379,46 @@ function renderChart(){
   document.getElementById("promoLegend").innerHTML = "";
 }
 
+function perfYearOf(p){
+  const d=p.start_date||p.end_date||"";
+  return d? String(d).slice(0,4) : "";
+}
+
+function populatePerfYears(){
+  const sel=document.getElementById("perfYear");
+  if(!sel || sel.dataset.filled) return;
+  const years=[...new Set((DATA.performance||[]).map(perfYearOf).filter(Boolean))].sort().reverse();
+  sel.innerHTML=`<option value="all">All years</option>`+years.map(y=>`<option value="${y}">${y}</option>`).join("");
+  sel.dataset.filled="1";
+}
+
 function renderPerf(){
-  const perf=(DATA.performance||[]).filter(p=> perfScope==="all" ? true : p.is_major!==false);
+  populatePerfYears();
+  let perf=(DATA.performance||[]).filter(p=> perfScope==="all" ? true : p.is_major!==false);
+  // year filter
+  if(perfYear!=="all") perf=perf.filter(p=>perfYearOf(p)===perfYear);
+  // sort
+  const sorters={
+    lift:(a,b)=>(b.lift_pct??-1e9)-(a.lift_pct??-1e9),
+    revenue:(a,b)=>(b.total_revenue||0)-(a.total_revenue||0),
+    roi:(a,b)=>((b.lift_pct||0)*(b.avg_open||0))-((a.lift_pct||0)*(a.avg_open||0)),
+    date:(a,b)=>String(b.start_date||"").localeCompare(String(a.start_date||"")),
+    open:(a,b)=>(b.avg_open??-1)-(a.avg_open??-1),
+  };
+  perf=perf.slice().sort(sorters[perfSort]||sorters.lift);
+  // rank filter (applied after sort by lift so top/bottom are by lift)
+  if(perfRank==="top"||perfRank==="bottom"){
+    const byLift=perf.slice().sort((a,b)=>(b.lift_pct??-1e9)-(a.lift_pct??-1e9));
+    const subset = perfRank==="top" ? byLift.slice(0,10) : byLift.slice(-10);
+    const keep=new Set(subset.map(p=>p.promo_name+(p.start_date||"")));
+    perf=perf.filter(p=>keep.has(p.promo_name+(p.start_date||"")));
+  }
+
   const box=document.getElementById("perfBars");
-  if(!perf.length){ box.innerHTML="<p class=muted>No promo performance data yet.</p>"; return; }
+  const countEl=document.getElementById("perfCount");
+  if(!perf.length){ box.innerHTML="<p class=muted>No promos match these filters.</p>"; if(countEl)countEl.textContent=""; return; }
+  if(countEl) countEl.textContent=`Showing ${perf.length} promo${perf.length>1?"s":""}${perfYear!=="all"?" · "+perfYear:""}${perfRank!=="all"?" · "+perfRank+" 10 by lift":""}`;
+
   const lifts=perf.map(p=>p.lift_pct).filter(v=>v!=null);
   const maxAbs=Math.max(60, ...lifts.map(Math.abs));
   box.innerHTML = perf.map((p,i)=>{
@@ -362,12 +432,10 @@ function renderPerf(){
     const pill = p.is_major===false?'<span class=pill>minor</span>':'';
     const open = p.avg_open!=null?p.avg_open+"%":"—";
     const click = p.avg_click!=null?p.avg_click+"%":"—";
-    // full detail line: discount, dates, revenue, days, engagement
     const dates = (p.start_date&&p.end_date) ? `${p.start_date} → ${p.end_date}` : (p.start_date||"");
     const disc = p.discount ? `<b>${p.discount}</b> · ` : "";
     const notesLine = p.notes ? `<div class="perf-notes">${(p.notes||"").replace(/</g,"&lt;")}</div>` : "";
     const detail = `<div class="perf-detail">${disc}${dates} · ${p.days} days · ${fmtK(p.total_revenue)} total · avg ${p.during_avg?fmtK(p.during_avg):"—"}/day vs ${p.baseline_avg?fmtK(p.baseline_avg):"—"} baseline · 📧 ${open} open · ${click} click (${p.email_count||0} emails)</div>${notesLine}`;
-    // subjects in a collapsible pull-down
     const subj = (p.subjects&&p.subjects.length)
       ? `<div class="subj-wrap">`+
         `<span class="subj-toggle" onclick="var e=this.nextElementSibling;var open=e.style.display==='block';e.style.display=open?'none':'block';this.querySelector('.caret').textContent=open?'▸':'▾';">`+
@@ -753,6 +821,7 @@ function emailOn(day){
 }
 
 function drawMonth(month){
+  if(salesAgg==="week") return drawMonthWeekly(month);
   const sales=(DATA.sales||[]).filter(s=>dayOf(s.sale_date).slice(0,7)===month)
                               .sort((a,b)=>dayOf(a.sale_date).localeCompare(dayOf(b.sale_date)));
   const stb=document.querySelector("#salesTable tbody");
@@ -780,6 +849,62 @@ function drawMonth(month){
     `${sales.length} days · ${fmtK(rev)} total · ${fmtK(avg)}/day avg · ${ord} orders`;
 }
 
+// ISO week start (Monday) for a YYYY-MM-DD string
+function weekStartOf(day){
+  const d=new Date(day+"T00:00:00");
+  const wd=(d.getDay()+6)%7; // Mon=0
+  d.setDate(d.getDate()-wd);
+  return d.toISOString().slice(0,10);
+}
+
+function drawMonthWeekly(month){
+  // include all days whose week overlaps the month; group by week-start
+  const sales=(DATA.sales||[]).filter(s=>dayOf(s.sale_date).slice(0,7)===month)
+                              .sort((a,b)=>dayOf(a.sale_date).localeCompare(dayOf(b.sale_date)));
+  const stb=document.querySelector("#salesTable tbody");
+  stb.innerHTML="";
+  if(!sales.length){ stb.innerHTML="<tr><td colspan=5 class=muted>No sales this month.</td></tr>"; document.getElementById("monthSummary").textContent=""; return; }
+  const weeks={};
+  sales.forEach(s=>{
+    const day=dayOf(s.sale_date);
+    const wk=weekStartOf(day);
+    (weeks[wk] ||= {rev:0,ord:0,units:0,days:0,promos:new Set(),emails:[]});
+    const w=weeks[wk];
+    w.rev+=s.revenue==null?0:Number(s.revenue);
+    w.ord+=s.orders==null?0:Number(s.orders);
+    w.units+=s.units==null?0:Number(s.units);
+    w.days++;
+    const promo=promoOn(day)||(s.note||"").trim();
+    if(promo) w.promos.add(promo);
+    emailOn(day).forEach(e=>w.emails.push(e));
+  });
+  let totRev=0, totOrd=0;
+  Object.keys(weeks).sort().forEach(wk=>{
+    const w=weeks[wk];
+    totRev+=w.rev; totOrd+=w.ord;
+    const wkEnd=(()=>{ const d=new Date(wk+"T00:00:00"); d.setDate(d.getDate()+6); return d.toISOString().slice(0,10); })();
+    const label=`${wk} → ${wkEnd.slice(5)}`;
+    let promoHtml = w.promos.size ? [...w.promos].map(p=>`<div style="color:var(--green);font-weight:600">${p}</div>`).join("") : "";
+    if(w.emails.length){
+      // dedupe email subjects within the week
+      const seen=new Set();
+      w.emails.forEach(e=>{
+        const key=(e.subject||"").trim();
+        if(seen.has(key)) return; seen.add(key);
+        const o=e.open_rate!=null?` <span class=muted>(${e.open_rate}% open)</span>`:"";
+        promoHtml+=`<div style="font-size:11px;color:#555">📧 ${(e.subject||"").replace(/</g,"&lt;")}${o}</div>`;
+      });
+    }
+    const promoCell = promoHtml ? `<td>${promoHtml}</td>` : `<td class=muted></td>`;
+    stb.insertAdjacentHTML("beforeend",
+      `<tr><td><b>${label}</b> <span class=muted style="font-size:11px">(${w.days}d)</span></td>`+
+      `<td><b>${fmtMoney(w.rev)}</b></td><td>${w.ord}</td><td>${w.units||"—"}</td>${promoCell}</tr>`);
+  });
+  const nWeeks=Object.keys(weeks).length;
+  document.getElementById("monthSummary").textContent =
+    `${nWeeks} week${nWeeks>1?"s":""} · ${fmtK(totRev)} total · ${fmtK(totRev/nWeeks)}/wk avg · ${totOrd} orders`;
+}
+
 function wireControls(){
   document.querySelectorAll("#rangeCtl button").forEach(b=>b.onclick=()=>{
     rangeMode=b.dataset.range;
@@ -795,6 +920,19 @@ function wireControls(){
     perfScope=b.dataset.scope;
     document.querySelectorAll("#perfScope button").forEach(x=>x.classList.remove("active"));
     b.classList.add("active"); renderPerf();
+  });
+  document.querySelectorAll("#perfRank button").forEach(b=>b.onclick=()=>{
+    perfRank=b.dataset.rank;
+    document.querySelectorAll("#perfRank button").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active"); renderPerf();
+  });
+  const py=document.getElementById("perfYear"); if(py) py.onchange=()=>{ perfYear=py.value; renderPerf(); };
+  const ps=document.getElementById("perfSort"); if(ps) ps.onchange=()=>{ perfSort=ps.value; renderPerf(); };
+  document.querySelectorAll("#salesAggCtl button").forEach(b=>b.onclick=()=>{
+    salesAgg=b.dataset.sagg;
+    document.querySelectorAll("#salesAggCtl button").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active");
+    const sel=document.getElementById("monthSelect"); drawMonth(sel.value);
   });
 }
 
@@ -855,6 +993,77 @@ function wireImport(){
   };
 }
 
+function renderKPIs(){
+  const sales=(DATA.sales||[]).slice().sort((a,b)=>dayOf(a.sale_date).localeCompare(dayOf(b.sale_date)));
+  if(!sales.length) return;
+  document.getElementById("kpiCard").style.display="block";
+  // monthly totals
+  const byMonth={};
+  sales.forEach(s=>{ const m=dayOf(s.sale_date).slice(0,7); (byMonth[m]??=0); byMonth[m]+=s.revenue==null?0:Number(s.revenue); });
+  const months=Object.keys(byMonth).sort();
+  const cur=months[months.length-1], prev=months[months.length-2];
+  const curRev=byMonth[cur]||0, prevRev=prev?byMonth[prev]:0;
+  // same month last year
+  const [cy,cm]=cur.split("-"); const lastYr=`${+cy-1}-${cm}`;
+  const lyRev=byMonth[lastYr];
+  const momPct = prevRev? Math.round((curRev-prevRev)/prevRev*100):null;
+  const yoyPct = lyRev? Math.round((curRev-lyRev)/lyRev*100):null;
+  // active promo today
+  const today=new Date().toISOString().slice(0,10);
+  const active=(DATA.promos||[]).find(p=> today>=dayOf(p.start_date) && today<=dayOf(p.end_date||p.start_date));
+  // best promo by lift
+  const best=(DATA.performance||[]).filter(p=>p.lift_pct!=null).sort((a,b)=>b.lift_pct-a.lift_pct)[0];
+  const monthName=new Date(cur+"-01").toLocaleString(undefined,{month:"short",year:"numeric"});
+
+  const cell=(label,value,sub,color)=>`<div style="padding:16px 18px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)">
+      <div class=muted style="font-size:11px;text-transform:uppercase;letter-spacing:.5px">${label}</div>
+      <div style="font-size:22px;font-weight:800;margin-top:4px;color:${color||'var(--ink,#222)'}">${value}</div>
+      <div class=muted style="font-size:11px;margin-top:2px">${sub||""}</div>
+    </div>`;
+  const pctColor=v=>v==null?'#888':(v>=0?'var(--green)':'#d9534f');
+  const pctStr=v=>v==null?'—':(v>0?'+':'')+v+'%';
+
+  document.getElementById("kpiStrip").innerHTML=
+    cell(`${monthName} revenue`, fmtK(curRev), `${sales.filter(s=>dayOf(s.sale_date).slice(0,7)===cur).length} days so far`)+
+    cell("vs last month", pctStr(momPct), prev?`${fmtK(prevRev)} in ${new Date(prev+"-01").toLocaleString(undefined,{month:"short"})}`:"—", pctColor(momPct))+
+    cell("vs last year", pctStr(yoyPct), lyRev?`${fmtK(lyRev)} in ${new Date(lastYr+"-01").toLocaleString(undefined,{month:"short",year:"2-digit"})}`:"no data", pctColor(yoyPct))+
+    cell("Active promo", active?(active.promo_name.length>22?active.promo_name.slice(0,22)+"…":active.promo_name):"None", active&&active.discount?active.discount:(active?"running":"no promo today"), active?'var(--green)':'#888')+
+    cell("Best promo ever", best?('+'+best.lift_pct+'%'):"—", best?(best.promo_name.length>24?best.promo_name.slice(0,24)+"…":best.promo_name):"", 'var(--green)');
+}
+
+function renderEngagement(){
+  const cs=(DATA.campaigns||[]).filter(c=>c.open_rate!=null && c.send_date);
+  const card=document.getElementById("engageCard");
+  if(!cs.length){ if(card) card.style.display="none"; return; }
+  if(card) card.style.display="block";
+  // group by month: avg open, avg click, count
+  const byMonth={};
+  cs.forEach(c=>{ const m=dayOf(c.send_date).slice(0,7);
+    (byMonth[m] ??= {open:0,click:0,n:0,cn:0});
+    byMonth[m].open+=Number(c.open_rate)||0; byMonth[m].n++;
+    if(c.click_rate!=null){ byMonth[m].click+=Number(c.click_rate); byMonth[m].cn++; }
+  });
+  const months=Object.keys(byMonth).sort().slice(-15);
+  if(!months.length) return;
+  const maxOpen=Math.max(...months.map(m=>byMonth[m].open/byMonth[m].n), 40);
+  const W=Math.max(600, months.length*54), H=200, pad=34;
+  const x=i=>pad+ i*((W-pad*2)/Math.max(1,months.length-1));
+  const yO=v=>H-pad-(v/maxOpen)*(H-pad*2);
+  const openPts=months.map((m,i)=>`${x(i)},${yO(byMonth[m].open/byMonth[m].n)}`).join(" ");
+  const clickPts=months.map((m,i)=>{const d=byMonth[m]; return `${x(i)},${yO(d.cn?d.click/d.cn:0)}`;}).join(" ");
+  let svg=`<svg viewBox="0 0 ${W} ${H+24}" style="width:100%;height:auto;font-family:inherit">`;
+  [0,.25,.5,.75,1].forEach(f=>{ const yy=H-pad-f*(H-pad*2); const lab=Math.round(maxOpen*f);
+    svg+=`<line x1="${pad}" y1="${yy}" x2="${W-pad}" y2="${yy}" stroke="#eee"/><text x="4" y="${yy+3}" font-size="9" fill="#999">${lab}%</text>`; });
+  months.forEach((m,i)=>{ if(i%Math.ceil(months.length/8||1)===0||i===months.length-1)
+    svg+=`<text x="${x(i)}" y="${H+2}" font-size="9" fill="#999" text-anchor="middle">${m.slice(2)}</text>`; });
+  svg+=`<polyline points="${openPts}" fill="none" stroke="#1B5E20" stroke-width="2"/>`;
+  svg+=`<polyline points="${clickPts}" fill="none" stroke="#C89B3C" stroke-width="2"/>`;
+  months.forEach((m,i)=>{ svg+=`<circle cx="${x(i)}" cy="${yO(byMonth[m].open/byMonth[m].n)}" r="2.5" fill="#1B5E20"/>`; });
+  svg+=`</svg>`;
+  document.getElementById("engageChart").innerHTML=svg+
+    `<div style="font-size:12px;margin-top:6px"><span style="color:#1B5E20">■</span> Avg open rate &nbsp; <span style="color:#C89B3C">■</span> Avg click rate</div>`;
+}
+
 function render(data){
   DATA=data;
   document.getElementById("status").style.display="none";
@@ -864,11 +1073,13 @@ function render(data){
   wireControls();
   wireImport();
   document.querySelectorAll(".tabbar .tab").forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
+  renderKPIs();
   renderPerf();
   renderChart();
   renderMonthly();
   renderCompState();
   renderStatic();
+  renderEngagement();
   setTab("own");   // default tab
 }
 
