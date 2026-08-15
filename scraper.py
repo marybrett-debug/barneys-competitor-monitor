@@ -445,9 +445,6 @@ def scrape_special_offers():
             return [], "error", f"special-offers fetch failed: {e}"
         browser.close()
 
-    import os as _os
-    _debug = _os.environ.get("SCRAPE_DEBUG") == "1"
-
     for c in cards:
         name = _clean(c.get("name", ""))
         block = c.get("block_text", "") or ""
@@ -494,11 +491,6 @@ def scrape_special_offers():
         offer = offer or _detect_offer(block)
 
         out_of_stock = "out of stock" in block.lower()
-
-        if _debug:
-            print(f"[debug] {name!r} | pack={pack} | bogo={bogo_txt} | "
-                  f"prices={vals} was={was} now={price} disc={is_disc} | "
-                  f"block={block[:120]!r}")
 
         offers.append({
             "strain": name,
