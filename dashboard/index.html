@@ -105,6 +105,10 @@
           style="background:var(--green);color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer">
           ⬆ Import sales data
         </button>
+        <button id="klaviyoBtn" onclick="pullKlaviyo()"
+          style="background:#5b3fa8;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer">
+          ✉ Pull Klaviyo (US)
+        </button>
         <span id="importStatus" style="font-size:12px;color:var(--muted)"></span>
       </div>
     </div>
@@ -798,6 +802,27 @@ function setTab(tab){
   const showOwn = tab==="own";
   ["tabOwn","tabOwn2"].forEach(id=>{ const e=document.getElementById(id); if(e) e.style.display=showOwn?"block":"none"; });
   const comp=document.getElementById("tabComp"); if(comp) comp.style.display=showOwn?"none":"block";
+}
+
+function pullKlaviyo(){
+  const status=document.getElementById("importStatus");
+  const btn=document.getElementById("klaviyoBtn");
+  btn.disabled=true; const old=btn.textContent; btn.textContent="Pulling…";
+  status.style.color="var(--muted)"; status.textContent="Pulling US Klaviyo campaigns from Supermetrics…";
+  fetch("/api/pull-klaviyo",{method:"POST"})
+    .then(async r=>{
+      const txt=await r.text();
+      let d; try{ d=JSON.parse(txt); }catch(_){ d={error:(txt||"").slice(0,200)||("HTTP "+r.status)}; }
+      if(!r.ok||d.error){ throw new Error(d.error||("HTTP "+r.status)); }
+      status.style.color="var(--green)";
+      status.textContent=`✓ Pulled ${d.imported} US campaigns${d.range?" ("+d.range+")":""}. Refreshing…`;
+      setTimeout(()=>location.reload(), 1400);
+    })
+    .catch(e=>{
+      status.style.color="#d9534f";
+      status.textContent="✕ "+e.message;
+      btn.disabled=false; btn.textContent=old;
+    });
 }
 
 function wireImport(){
