@@ -70,7 +70,7 @@
     <h1>BARNEY'S FARM</h1>
     <p>Promo &amp; Sales Intelligence · Higher and Higher</p>
   </div>
-  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.4.0</span>
+  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.5.0</span>
 </header>
 
 <div class="wrap">
@@ -163,11 +163,31 @@
 
   <div class="card" id="monthlyCard" style="display:none">
     <h2>Month-by-month: year-over-year</h2>
+    <div class="controls" style="flex-wrap:wrap;gap:10px">
+      <span class="lbl">Years:</span>
+      <div class="grp" id="monthlyYears"></div>
+      <span class="lbl" style="margin-left:6px">Months:</span>
+      <select id="monthlyMonthFilter" style="padding:5px 9px;border-radius:6px;border:1px solid var(--line);font-size:13px">
+        <option value="all">All months</option>
+        <option value="recent">Last 6 months</option>
+        <option value="1">January</option><option value="2">February</option>
+        <option value="3">March</option><option value="4">April</option>
+        <option value="5">May</option><option value="6">June</option>
+        <option value="7">July</option><option value="8">August</option>
+        <option value="9">September</option><option value="10">October</option>
+        <option value="11">November</option><option value="12">December</option>
+      </select>
+      <span class="lbl" style="margin-left:6px">Detail:</span>
+      <div class="grp" id="monthlyDetail">
+        <button data-detail="full" class="active">Full</button>
+        <button data-detail="compact">Compact</button>
+      </div>
+    </div>
     <table id="monthlyTable">
       <thead><tr id="monthlyHead"><th>Month</th></tr></thead>
       <tbody></tbody>
     </table>
-    <div class="legend">Revenue total per month with the promo(s) that ran. <b>YoY</b> = change vs the prior year's same month. Months with no sales data are blank.</div>
+    <div class="legend">Revenue total per month with the promo(s) that ran. <b>YoY</b> = change vs the prior year's same month. Compact hides promo/email detail for a quick scan.</div>
   </div>
 
   <div class="card" id="offersCard" style="display:none">
@@ -517,47 +537,86 @@ function renderPerf(){
   }).join("");
 }
 
+let monthlyYearsSel = null;   // Set of selected years (null = all)
+let monthlyMonthFilter = "all";
+let monthlyDetail = "full";
+
 function renderMonthly(){
   const md = DATA.monthly;
   if(!md || !md.years || !md.years.length) return;
   document.getElementById("monthlyCard").style.display="block";
-  const years = md.years;
+  const allYears = md.years;
   const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-  // header: Month | <year rev+promo> for each year | YoY (last two years)
+  // build year toggle buttons once
+  const yearsBox=document.getElementById("monthlyYears");
+  if(yearsBox && !yearsBox.dataset.filled){
+    if(monthlyYearsSel===null) monthlyYearsSel=new Set(allYears);
+    yearsBox.innerHTML=allYears.map(y=>`<button data-yr="${y}" class="${monthlyYearsSel.has(y)?'active':''}">${y}</button>`).join("");
+    yearsBox.querySelectorAll("button").forEach(b=>b.onclick=()=>{
+      const y=b.dataset.yr;
+      if(monthlyYearsSel.has(y)&&monthlyYearsSel.size>1) monthlyYearsSel.delete(y);
+      else monthlyYearsSel.add(y);
+      b.classList.toggle("active", monthlyYearsSel.has(y));
+      renderMonthly();
+    });
+    yearsBox.dataset.filled="1";
+  }
+  if(monthlyYearsSel===null) monthlyYearsSel=new Set(allYears);
+  const years = allYears.filter(y=>monthlyYearsSel.has(y));
+
+  // which months to show
+  let showMonths=[];
+  if(monthlyMonthFilter==="all"){ for(let m=1;m<=12;m++) showMonths.push(m); }
+  else if(monthlyMonthFilter==="recent"){
+    // last 6 calendar months present in the newest year
+    const now=new Date();
+    for(let i=5;i>=0;i--){ const d=new Date(now.getFullYear(),now.getMonth()-i,1); showMonths.push(d.getMonth()+1); }
+  } else { showMonths=[parseInt(monthlyMonthFilter,10)]; }
+
+  // rebuild header
   const head=document.getElementById("monthlyHead");
+  head.innerHTML="<th>Month</th>";
   years.forEach(y=> head.insertAdjacentHTML("beforeend",`<th>${y}</th>`));
   if(years.length>=2) head.insertAdjacentHTML("beforeend",`<th>YoY</th>`);
 
   const tb=document.querySelector("#monthlyTable tbody");
+  tb.innerHTML="";
   let uid=0;
-  for(let m=1;m<=12;m++){
+  showMonths.forEach(m=>{
     const row = md.months[m] || {};
-    if(!years.some(y=>row[y])) continue;
+    if(!years.some(y=>row[y])) return;
     let tds=`<td><b>${monthNames[m-1]}</b></td>`;
     years.forEach(y=>{
       const c=row[y];
       if(!c){ tds+=`<td class=muted>—</td>`; return; }
-      const promoList = (c.promos && c.promos.length)
-        ? `<ul style="margin:4px 0 0;padding-left:16px;font-size:11px;color:var(--green)">`
-          + c.promos.map(pn=>{
-              const lab = (typeof pn==="string") ? pn : pn.label;
-              const nt = (typeof pn==="object" && pn.notes) ? `<div style="color:#777;font-style:italic;font-weight:400">${pn.notes.replace(/</g,"&lt;")}</div>` : "";
-              return `<li style="margin:3px 0">${lab}${nt}</li>`;
-            }).join("") + `</ul>`
-        : `<div class=muted style="font-size:11px">—</div>`;
-      const subs = c.subjects||[];
-      uid++;
-      const subToggle = subs.length
-        ? `<span class="subj-toggle" onclick="var e=document.getElementById('msub${uid}');e.style.display=e.style.display==='none'?'block':'none';">▸ ${subs.length} emails</span>` : "";
-      const subBlock = subs.length
-        ? `<div class="subjects" id="msub${uid}" style="display:none">`+
-          subs.map(s=>{
-            const o=s.open_rate!=null?` <span class=muted>(${s.open_rate}% open)</span>`:"";
-            return `<div class="subj-line">• ${(s.subject||"").replace(/</g,"&lt;")}${o}</div>`;
-          }).join("")+`</div>` : "";
-      tds+=`<td><b>${fmtK(c.revenue)}</b><div class=muted style="font-size:11px">${c.orders} orders · ${c.days} days</div>`+
-           `${promoList}${subToggle}${subBlock}</td>`;
+      let detailHtml="";
+      if(monthlyDetail==="full"){
+        const promoList = (c.promos && c.promos.length)
+          ? `<ul style="margin:4px 0 0;padding-left:16px;font-size:11px;color:var(--green)">`
+            + c.promos.map(pn=>{
+                const lab = (typeof pn==="string") ? pn : pn.label;
+                const nt = (typeof pn==="object" && pn.notes) ? `<div style="color:#777;font-style:italic;font-weight:400">${pn.notes.replace(/</g,"&lt;")}</div>` : "";
+                return `<li style="margin:3px 0">${lab}${nt}</li>`;
+              }).join("") + `</ul>`
+          : `<div class=muted style="font-size:11px">—</div>`;
+        const subs = c.subjects||[];
+        uid++;
+        const subToggle = subs.length
+          ? `<span class="subj-toggle" onclick="var e=document.getElementById('msub${uid}');e.style.display=e.style.display==='none'?'block':'none';">▸ ${subs.length} emails</span>` : "";
+        const subBlock = subs.length
+          ? `<div class="subjects" id="msub${uid}" style="display:none">`+
+            subs.map(s=>{
+              const o=s.open_rate!=null?` <span class=muted>(${s.open_rate}% open)</span>`:"";
+              return `<div class="subj-line">• ${(s.subject||"").replace(/</g,"&lt;")}${o}</div>`;
+            }).join("")+`</div>` : "";
+        detailHtml=`${promoList}${subToggle}${subBlock}`;
+      } else {
+        // compact: just a count of promos
+        const np=(c.promos||[]).length;
+        detailHtml = np ? `<div class=muted style="font-size:11px">${np} promo${np>1?"s":""}</div>` : "";
+      }
+      tds+=`<td><b>${fmtK(c.revenue)}</b><div class=muted style="font-size:11px">${c.orders} orders · ${c.days} days</div>${detailHtml}</td>`;
     });
     if(years.length>=2){
       const a=row[years[years.length-2]], b=row[years[years.length-1]];
@@ -570,7 +629,7 @@ function renderMonthly(){
       }
     }
     tb.insertAdjacentHTML("beforeend",`<tr>${tds}</tr>`);
-  }
+  });
 }
 
 function priceCellHTML(o){
@@ -1006,6 +1065,12 @@ function wireControls(){
     b.classList.add("active");
     const sel=document.getElementById("monthSelect"); drawMonth(sel.value);
   });
+  const mmf=document.getElementById("monthlyMonthFilter"); if(mmf) mmf.onchange=()=>{ monthlyMonthFilter=mmf.value; renderMonthly(); };
+  document.querySelectorAll("#monthlyDetail button").forEach(b=>b.onclick=()=>{
+    monthlyDetail=b.dataset.detail;
+    document.querySelectorAll("#monthlyDetail button").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active"); renderMonthly();
+  });
 }
 
 function setTab(tab){
@@ -1125,7 +1190,8 @@ function renderEngagement(){
   const card=document.getElementById("engageCard");
   if(!cs.length){ if(card) card.style.display="none"; return; }
   if(card) card.style.display="block";
-  // group by month: avg open, avg click, count
+  // industry benchmarks (Klaviyo 2026 ecommerce campaign averages)
+  const BM_OPEN=31.0, BM_CLICK=1.69;
   const byMonth={};
   cs.forEach(c=>{ const m=dayOf(c.send_date).slice(0,7);
     (byMonth[m] ??= {open:0,click:0,n:0,cn:0});
@@ -1134,7 +1200,7 @@ function renderEngagement(){
   });
   const months=Object.keys(byMonth).sort().slice(-15);
   if(!months.length) return;
-  const maxOpen=Math.max(...months.map(m=>byMonth[m].open/byMonth[m].n), 40);
+  const maxOpen=Math.max(...months.map(m=>byMonth[m].open/byMonth[m].n), BM_OPEN, 40);
   const W=Math.max(600, months.length*54), H=200, pad=34;
   const x=i=>pad+ i*((W-pad*2)/Math.max(1,months.length-1));
   const yO=v=>H-pad-(v/maxOpen)*(H-pad*2);
@@ -1143,14 +1209,29 @@ function renderEngagement(){
   let svg=`<svg viewBox="0 0 ${W} ${H+24}" style="width:100%;height:auto;font-family:inherit">`;
   [0,.25,.5,.75,1].forEach(f=>{ const yy=H-pad-f*(H-pad*2); const lab=Math.round(maxOpen*f);
     svg+=`<line x1="${pad}" y1="${yy}" x2="${W-pad}" y2="${yy}" stroke="#eee"/><text x="4" y="${yy+3}" font-size="9" fill="#999">${lab}%</text>`; });
+  // benchmark reference lines (dashed)
+  const yBmOpen=yO(BM_OPEN), yBmClick=yO(BM_CLICK);
+  svg+=`<line x1="${pad}" y1="${yBmOpen}" x2="${W-pad}" y2="${yBmOpen}" stroke="#1B5E20" stroke-width="1" stroke-dasharray="5,4" opacity=".55"/>`+
+       `<text x="${W-pad-2}" y="${yBmOpen-3}" font-size="8.5" fill="#1B5E20" text-anchor="end" opacity=".8">industry avg open 31%</text>`;
+  svg+=`<line x1="${pad}" y1="${yBmClick}" x2="${W-pad}" y2="${yBmClick}" stroke="#C89B3C" stroke-width="1" stroke-dasharray="5,4" opacity=".55"/>`+
+       `<text x="${W-pad-2}" y="${yBmClick-3}" font-size="8.5" fill="#C89B3C" text-anchor="end" opacity=".85">industry avg click 1.7%</text>`;
   months.forEach((m,i)=>{ if(i%Math.ceil(months.length/8||1)===0||i===months.length-1)
     svg+=`<text x="${x(i)}" y="${H+2}" font-size="9" fill="#999" text-anchor="middle">${m.slice(2)}</text>`; });
   svg+=`<polyline points="${openPts}" fill="none" stroke="#1B5E20" stroke-width="2"/>`;
   svg+=`<polyline points="${clickPts}" fill="none" stroke="#C89B3C" stroke-width="2"/>`;
-  months.forEach((m,i)=>{ svg+=`<circle cx="${x(i)}" cy="${yO(byMonth[m].open/byMonth[m].n)}" r="2.5" fill="#1B5E20"/>`; });
+  // dots with hover tooltips (native SVG <title>)
+  months.forEach((m,i)=>{
+    const d=byMonth[m];
+    const op=(d.open/d.n), cl=(d.cn?d.click/d.cn:0);
+    const vsOpen=op>=BM_OPEN?`+${(op-BM_OPEN).toFixed(1)}`:`${(op-BM_OPEN).toFixed(1)}`;
+    const vsClick=cl>=BM_CLICK?`+${(cl-BM_CLICK).toFixed(2)}`:`${(cl-BM_CLICK).toFixed(2)}`;
+    const tip=`${m}\nOpen: ${op.toFixed(1)}% (vs 31% avg: ${vsOpen}pt)\nClick: ${cl.toFixed(2)}% (vs 1.7% avg: ${vsClick}pt)\n${d.n} campaign${d.n>1?"s":""}`;
+    svg+=`<circle cx="${x(i)}" cy="${yO(op)}" r="4" fill="#1B5E20" style="cursor:pointer"><title>${tip}</title></circle>`;
+    svg+=`<circle cx="${x(i)}" cy="${yO(cl)}" r="4" fill="#C89B3C" opacity=".85" style="cursor:pointer"><title>${tip}</title></circle>`;
+  });
   svg+=`</svg>`;
   document.getElementById("engageChart").innerHTML=svg+
-    `<div style="font-size:12px;margin-top:6px"><span style="color:#1B5E20">■</span> Avg open rate &nbsp; <span style="color:#C89B3C">■</span> Avg click rate</div>`;
+    `<div style="font-size:12px;margin-top:6px"><span style="color:#1B5E20">■</span> Avg open rate &nbsp; <span style="color:#C89B3C">■</span> Avg click rate &nbsp; <span class=muted>· · · industry avg (Klaviyo 2026, ecommerce)</span> &nbsp;<span class=muted style="font-size:11px">— hover a dot for detail</span></div>`;
 }
 
 function render(data){
