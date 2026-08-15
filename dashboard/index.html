@@ -75,7 +75,7 @@
     <h1>BARNEY'S FARM</h1>
     <p>Promo &amp; Sales Intelligence · Higher and Higher</p>
   </div>
-  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.7.1</span>
+  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.8.0</span>
 </header>
 
 <div class="wrap">
@@ -223,7 +223,7 @@
       </div>
       <div id="offerKpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:0;margin:12px 0;border:1px solid var(--line);border-radius:8px;overflow:hidden"></div>
       <table id="offersTable">
-        <thead><tr><th>Strain</th><th>Offer</th><th>Discount</th><th>Price</th></tr></thead>
+        <thead><tr><th>Strain</th><th>Pack</th><th>BOGO</th><th>Discount</th><th>Price</th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -714,7 +714,7 @@ function drawOfferWeek(week){
 
   // ---- KPI strip ----
   const disc=offers.filter(o=>o.is_discounted);
-  const bogo=offers.filter(o=>/bogo/i.test(o.offer||""));
+  const bogo=offers.filter(o=>o.bogo);
   const oos=offers.filter(o=>/out of stock/i.test((o.offer||"")+(o.stock||"")));
   const pcts=offers.map(discountPct).filter(v=>v!=null);
   const deepest=pcts.length?Math.max(...pcts):null;
@@ -735,7 +735,7 @@ function drawOfferWeek(week){
 
   // ---- filter + sort ----
   if(offerFilter==="disc") offers=offers.filter(o=>o.is_discounted);
-  else if(offerFilter==="bogo") offers=offers.filter(o=>/bogo/i.test(o.offer||""));
+  else if(offerFilter==="bogo") offers=offers.filter(o=>o.bogo);
   const sorters={
     discount:(a,b)=>((discountPct(b)||-1)-(discountPct(a)||-1)),
     price:(a,b)=>((a.price==null?1e9:a.price)-(b.price==null?1e9:b.price)),
@@ -747,11 +747,12 @@ function drawOfferWeek(week){
   otb.innerHTML="";
   if(!offers.length){ otb.innerHTML="<tr><td colspan=5 class=muted>No offers match.</td></tr>"; return; }
   offers.forEach(o=>{
-    const offerCell=o.offer?`<span style="color:var(--green);font-weight:600">${o.offer}</span>`:`<span class=muted>—</span>`;
     const pct=discountPct(o);
     const pctCell=pct!=null?`<span style="color:#d9534f;font-weight:700">-${pct}%</span>`:`<span class=muted>—</span>`;
+    const packCell=o.pack_size!=null?`<span class=muted>${o.pack_size}-pack</span>`:`<span class=muted>—</span>`;
+    const bogoCell=o.bogo?`<span style="color:var(--green);font-weight:600">${o.bogo}</span>`:`<span class=muted>—</span>`;
     otb.insertAdjacentHTML("beforeend",
-      `<tr><td><b>${o.strain}</b></td><td>${offerCell}</td><td>${pctCell}</td><td>${priceCellHTML(o)}</td></tr>`);
+      `<tr><td><b>${o.strain}</b></td><td>${packCell}</td><td>${bogoCell}</td><td>${pctCell}</td><td>${priceCellHTML(o)}</td></tr>`);
   });
 
   // ---- changes tab content ----
