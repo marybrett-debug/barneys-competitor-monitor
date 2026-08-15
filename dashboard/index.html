@@ -75,7 +75,7 @@
     <h1>BARNEY'S FARM</h1>
     <p>Promo &amp; Sales Intelligence · Higher and Higher</p>
   </div>
-  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.7.0</span>
+  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.7.1</span>
 </header>
 
 <div class="wrap">
@@ -1184,7 +1184,7 @@ function wireControls(){
 }
 
 function setTab(tab){
-  document.querySelectorAll(".tabbar .tab").forEach(b=>b.classList.toggle("active", b.dataset.tab===tab));
+  document.querySelectorAll("#tabBar .tab").forEach(b=>b.classList.toggle("active", b.dataset.tab===tab));
   // own cards live in #tabOwn and #tabOwn2; competitor cards in #tabComp
   const showOwn = tab==="own";
   ["tabOwn","tabOwn2"].forEach(id=>{ const e=document.getElementById(id); if(e) e.style.display=showOwn?"block":"none"; });
@@ -1352,7 +1352,7 @@ function render(data){
   document.getElementById("chartCard").style.display="block";
   wireControls();
   wireImport();
-  document.querySelectorAll(".tabbar .tab").forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
+  document.querySelectorAll("#tabBar .tab").forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
   renderKPIs();
   renderUpdateStamps();
   renderPerf();
