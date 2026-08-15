@@ -86,6 +86,115 @@ def _query_supermetrics(api_key, start_date, end_date):
     return rows
 
 
+import re as _re
+
+def _normalize_promo_base(name, subj):
+    """Reduce a campaign name to a stable 'base' that groups a launch email with
+    its follow-ups/reminders. Strips numbered prefix, [Follow-up], END/Last Chance,
+    region suffix, and issue tags."""
+    s = name or ""
+    s = _re.sub(r"\[follow-?up\]", "", s, flags=_re.I)
+    s = _re.sub(r"^\s*\d+\.\s*", "", s)              # leading "9. "
+    s = _re.sub(r"\bEND\b", "", s, flags=_re.I)
+    s = _re.sub(r"last chance", "", s, flags=_re.I)
+    s = _re.sub(r"\(promo issue\)", "", s, flags=_re.I)
+    s = _re.sub(r"\bderry\b", "", s, flags=_re.I)
+    # strip region suffix: - US / - USA / - ROW etc at the end
+    s = _re.sub(r"[-–]\s*(usa?|row|de|uk\/?ir|fr|it|es|nl|at)\s*$", "", s, flags=_re.I)
+    s = _re.sub(r"\bMJB\b", "", s)
+    s = _re.sub(r"\s+", " ", s).strip(" -–|")
+    return s.strip()
+
+
+def _classify_promo(base, subjects):
+    """Return (is_major, discount) inferred from the campaign name + subjects."""
+    blob = (base + " " + " ".join(subjects)).upper()
+    discount = None
+    m = _re.search(r"(\d{1,2})\s*%\s*OFF", blob)
+    if m:
+        discount = m.group(1) + "% off"
+    elif "BOGO" in blob or "BUY 1 GET 1" in blob or "BUY ONE GET ONE" in blob:
+        discount = "BOGO"
+    elif "FREE SEEDS" in blob:
+        discount = "Free seeds"
+    # major if it's a sale/discount/anniversary; minor if strain-of-week / new release
+    major_kw = ("% OFF", "SALE", "BOGO", "ANNIVERSARY", "BLACK FRIDAY", "CYBER",
+                "GREEN WEDNESDAY", "40%", "30%", "25%", "20%", "50%")
+    minor_kw = ("SOW", "STRAIN OF THE WEEK", "SOM", "NEW RELEASE", "NEW RELEASES")
+    is_major = any(k in blob for k in major_kw) and not any(k in blob for k in minor_kw)
+    return is_major, discount
+
+
+def _derive_and_insert_promos(cur, conn, collected):
+    """Group US campaigns into promo windows and INSERT only promos that don't
+    already exist in barneys_promos. Never updates/overwrites existing rows, so
+    hand-curated history is protected. Returns count of promos added."""
+    if not collected:
+        return 0
+    from datetime import timedelta
+    # group by normalized base; within a group, split runs >21 days apart
+    groups = {}
+    for send, name, subj in collected:
+        base = _normalize_promo_base(name, subj)
+        if not base:
+            continue
+        groups.setdefault(base, []).append((send, subj))
+
+    windows = []
+    for base, items in groups.items():
+        items.sort()
+        cluster = [items[0]]
+        for it in items[1:]:
+            if (it[0] - cluster[-1][0]).days > 21:
+                windows.append((base, cluster)); cluster = [it]
+            else:
+                cluster.append(it)
+        windows.append((base, cluster))
+
+    # find existing (start_date, promo_name) pairs to avoid overwrite
+    cur.execute("SELECT start_date, promo_name FROM barneys_promos")
+    existing_rows = cur.fetchall()
+    existing = set((str(r[0]), (r[1] or "").strip().lower()) for r in existing_rows)
+    # protect curated history: only auto-insert promos that start AFTER the latest
+    # curated promo already on file (so we fill the forward gap, never duplicate
+    # or overwrite hand-curated Jan-June work). If the table is empty, allow all.
+    curated_cutoff = None
+    if existing_rows:
+        try:
+            curated_cutoff = max(str(r[0]) for r in existing_rows)
+        except Exception:
+            curated_cutoff = None
+
+    added = 0
+    for base, cluster in windows:
+        dates = [c[0] for c in cluster]
+        subjects = [c[1] for c in cluster]
+        start = min(dates)
+        # skip anything at/before the curated cutoff — protects existing history
+        if curated_cutoff and start.isoformat() <= curated_cutoff:
+            continue
+        end = max(dates) + timedelta(days=3)   # tail for the offer after last email
+        is_major, discount = _classify_promo(base, subjects)
+        promo_name = base[:120]
+        key = (start.isoformat(), promo_name.strip().lower())
+        if key in existing:
+            continue
+        notes = "Auto-derived from Klaviyo campaigns: " + "; ".join(s[:60] for s in subjects[:3])
+        try:
+            cur.execute("""
+                INSERT INTO barneys_promos (start_date, end_date, promo_name, discount, notes, is_major)
+                VALUES (%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (start_date, promo_name) DO NOTHING
+            """, (start.isoformat(), end.isoformat(), promo_name, discount, notes, is_major))
+            if cur.rowcount > 0:
+                added += 1
+        except Exception:
+            conn.rollback()
+            continue
+    conn.commit()
+    return added
+
+
 class handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         b = json.dumps(obj).encode()
@@ -139,6 +248,7 @@ class handler(BaseHTTPRequestHandler):
             cur = conn.cursor()
             n = 0
             seen_dates = []
+            collected = []   # (date, campaign_name, subject) for promo derivation
             for r in rows[1:]:
                 name = str(r[i_name]) if i_name is not None and i_name < len(r) else ""
                 # US-only: campaign name tags region
@@ -170,7 +280,12 @@ class handler(BaseHTTPRequestHandler):
                 """, (send.isoformat(), subj, name, orate, crate, rec, None))
                 n += 1
                 seen_dates.append(send)
+                collected.append((send, name, subj))
             conn.commit()
+
+            # ---- derive promo windows from campaigns, insert only NEW ones ----
+            promos_added = _derive_and_insert_promos(cur, conn, collected)
+
             cur.close(); conn.close()
 
             if not seen_dates:
@@ -178,6 +293,7 @@ class handler(BaseHTTPRequestHandler):
                                         "message": "No US campaigns found in range."})
             seen_dates.sort()
             return self._send(200, {"ok": True, "imported": n,
+                                    "promos_added": promos_added,
                                     "range": f"{seen_dates[0]} .. {seen_dates[-1]}"})
         except urllib.error.HTTPError as e:
             detail = ""
