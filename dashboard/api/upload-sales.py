@@ -44,6 +44,22 @@ def _num(s):
         return None
 
 
+def _find_col(low_headers, candidates):
+    """Match a header exactly, by startswith, or contains (so 'net total (excl. tax)' matches 'net total')."""
+    for cand in candidates:
+        if cand in low_headers:
+            return low_headers.index(cand)
+    for cand in candidates:
+        for i, h in enumerate(low_headers):
+            if h.startswith(cand):
+                return i
+    for cand in candidates:
+        for i, h in enumerate(low_headers):
+            if cand in h:
+                return i
+    return None
+
+
 def _rows_from_csv(text):
     """Yield (date, revenue, orders) from CSV text in either Bagisto or converted format."""
     lines = text.splitlines()
@@ -59,9 +75,11 @@ def _rows_from_csv(text):
     reader.fieldnames = [(h or "").strip() for h in (reader.fieldnames or [])]
     fields = {f.lower(): f for f in reader.fieldnames}
     # map columns flexibly
-    date_col = fields.get("date")
-    rev_col = fields.get("net total") or fields.get("revenue") or fields.get("net")
-    ord_col = fields.get("sales") or fields.get("orders")
+    lowh = [f.lower() for f in reader.fieldnames]
+    _di = _find_col(lowh, ("date",)); _ri = _find_col(lowh, ("net total","revenue","net")); _oi = _find_col(lowh, ("sales","orders"))
+    date_col = reader.fieldnames[_di] if _di is not None else None
+    rev_col = reader.fieldnames[_ri] if _ri is not None else None
+    ord_col = reader.fieldnames[_oi] if _oi is not None else None
     for row in reader:
         row = {(k or "").strip(): v for k, v in row.items()}
         d = _parse_date(row.get(date_col, "")) if date_col else None
@@ -88,8 +106,8 @@ def _rows_from_xlsx(data):
             if "date" in low:
                 header = low
                 idx_date = low.index("date")
-                idx_rev = next((low.index(x) for x in ("net total", "revenue", "net") if x in low), None)
-                idx_ord = next((low.index(x) for x in ("sales", "orders") if x in low), None)
+                idx_rev = _find_col(low, ("net total", "revenue", "net"))
+                idx_ord = _find_col(low, ("sales", "orders"))
             continue
         if idx_date >= len(r):
             continue
@@ -183,7 +201,7 @@ class handler(BaseHTTPRequestHandler):
                     INSERT INTO daily_sales (sale_date, revenue, orders, updated_at)
                     VALUES (%s, %s, %s, now())
                     ON CONFLICT (sale_date) DO UPDATE SET
-                      revenue = EXCLUDED.revenue,
+                      revenue = COALESCE(EXCLUDED.revenue, daily_sales.revenue),
                       orders  = COALESCE(EXCLUDED.orders, daily_sales.orders),
                       updated_at = now()
                 """, (d.isoformat(), rev, orders))
