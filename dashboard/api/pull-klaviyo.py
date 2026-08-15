@@ -64,7 +64,7 @@ def _query_supermetrics(api_key, start_date, end_date):
         "start_date": start_date,
         "end_date": end_date,
         "fields": FIELDS,
-        "settings": {"report_type": "MetricExportCampaign"},
+        "settings": {"no_headers": False},
         "max_rows": 5000,
     }
     data = json.dumps(body).encode("utf-8")
