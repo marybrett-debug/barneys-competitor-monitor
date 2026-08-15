@@ -18,6 +18,11 @@
   header .brand p{margin:3px 0 0;opacity:.75;font-size:13px;color:#FFC93C}
   .wrap{max-width:1080px;margin:0 auto;padding:24px 28px}
   .card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-bottom:22px}
+  .card > h2{cursor:pointer;user-select:none;display:flex;align-items:center;gap:8px}
+  .card > h2 .card-caret, .card > .card-head h2 .card-caret{font-size:12px;color:var(--muted);transition:transform .15s;display:inline-block}
+  .card > .card-head{cursor:pointer;user-select:none}
+  .card.collapsed > h2 .card-caret, .card.collapsed > .card-head h2 .card-caret{transform:rotate(-90deg)}
+  .card.collapsed > *:not(h2):not(.card-head){display:none !important}
   .card h2{font-size:15px;margin:0 0 12px;color:#555}
   table{border-collapse:collapse;width:100%;font-size:13px}
   th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left}
@@ -70,7 +75,7 @@
     <h1>BARNEY'S FARM</h1>
     <p>Promo &amp; Sales Intelligence · Higher and Higher</p>
   </div>
-  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.6.0</span>
+  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.7.0</span>
 </header>
 
 <div class="wrap">
@@ -118,7 +123,7 @@
   </div>
 
   <div class="card" id="chartCard" style="display:none">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+    <div class="card-head" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
       <h2 style="margin:0">Revenue timeline</h2>
       <div style="display:flex;align-items:center;gap:8px">
         <input type="file" id="salesFile" accept=".csv,.xlsx,.xlsm" style="display:none"/>
@@ -1357,6 +1362,28 @@ function render(data){
   renderStatic();
   renderEngagement();
   setTab("own");   // default tab
+  makeCollapsible();
+}
+
+function makeCollapsible(){
+  document.querySelectorAll(".card").forEach(card=>{
+    // header can be a direct <h2>, or a <h2> inside a .card-head flex row
+    const head = card.querySelector(":scope > .card-head");
+    let h2 = card.querySelector(":scope > h2") || (head && head.querySelector("h2"));
+    if(!h2) return;                         // no header (e.g. KPI strip) — always open
+    const clickTarget = head || h2;         // click the whole header row if there is one
+    if(clickTarget.dataset.collapsible) return;
+    clickTarget.dataset.collapsible="1";
+    if(!h2.querySelector(".card-caret")){
+      const caret=document.createElement("span");
+      caret.className="card-caret"; caret.textContent="▾";
+      h2.insertBefore(caret, h2.firstChild);
+    }
+    clickTarget.addEventListener("click",(e)=>{
+      if(e.target.closest("button,select,input,a")) return;  // ignore control clicks
+      card.classList.toggle("collapsed");
+    });
+  });
 }
 
 fetch("/api/data")
