@@ -40,18 +40,26 @@
   .controls button.active{background:#fff;color:var(--green);font-weight:700;box-shadow:0 1px 2px rgba(0,0,0,.1)}
   .controls .lbl{font-size:12px;color:var(--muted);margin-right:2px}
   .bar-row{display:flex;align-items:center;gap:10px;margin:5px 0;font-size:13px}
-  .bar-row .nm{width:200px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bar-row .nm{width:240px;flex:none;font-size:13px;line-height:1.25}
   .bar-row .bar-wrap{flex:1;background:#f0ece6;border-radius:4px;height:20px;position:relative}
   .bar-row .bar{height:100%;border-radius:4px;background:var(--green)}
   .bar-row .bar.neg{background:#d9534f}
   .bar-row .val{width:70px;flex:none;text-align:right;font-weight:700}
   .perf-item{margin:8px 0;padding-bottom:8px;border-bottom:1px solid var(--line)}
   .perf-meta{display:flex;gap:14px;align-items:center;margin:3px 0 0 0;padding-left:2px}
+  .perf-detail{font-size:11px;color:#666;margin:3px 0 0 2px;line-height:1.4}
+  .perf-notes{font-size:11px;color:#444;margin:2px 0 0 2px;font-style:italic}
   .perf-meta .eng{font-size:12px;color:#666}
   .subj-toggle{font-size:11px;color:var(--orange-dark);cursor:pointer;user-select:none}
+  .subj-wrap{margin-top:4px}
+  .subj-wrap .caret{display:inline-block;width:10px}
   .subjects{margin:5px 0 2px 12px;padding:6px 10px;background:#faf8f5;border-radius:6px}
   .subj-line{font-size:12px;color:#444;padding:1px 0}
   .pill{display:inline-block;font-size:10px;padding:1px 6px;border-radius:10px;background:#eee;color:#666;margin-left:6px}
+  .tabbar{display:flex;gap:4px;margin-bottom:20px;border-bottom:2px solid var(--line)}
+  .tabbar .tab{border:none;background:transparent;padding:10px 18px;font-size:14px;font-weight:600;
+       color:#888;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px}
+  .tabbar .tab.active{color:var(--green);border-bottom-color:var(--green)}
 </style>
 </head>
 <body>
@@ -62,40 +70,81 @@
     <h1>BARNEY'S FARM</h1>
     <p>Promo &amp; Sales Intelligence · Higher and Higher</p>
   </div>
+  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.2.0</span>
 </header>
 
 <div class="wrap">
   <div id="status" class="loading">Loading data…</div>
 
+  <div id="tabBar" class="tabbar" style="display:none">
+    <button class="tab active" data-tab="own">Sales &amp; Promos</button>
+    <button class="tab" data-tab="comp">Competitors</button>
+  </div>
+
+  <div id="tabOwn">
+  <div class="card" id="kpiCard" style="display:none;padding:0;overflow:hidden">
+    <div id="kpiStrip" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:0"></div>
+  </div>
   <!-- PROMO PERFORMANCE: the headline view -->
   <div class="card" id="perfCard" style="display:none">
     <h2>Promo performance — revenue lift vs. surrounding weeks</h2>
-    <div class="controls">
+    <div class="controls" style="flex-wrap:wrap;gap:10px">
       <span class="lbl">Show:</span>
       <div class="grp" id="perfScope">
-        <button data-scope="major" class="active">Major campaigns</button>
-        <button data-scope="all">All promos</button>
+        <button data-scope="major" class="active">Major</button>
+        <button data-scope="all">All</button>
       </div>
+      <span class="lbl" style="margin-left:6px">Year:</span>
+      <select id="perfYear" style="padding:5px 9px;border-radius:6px;border:1px solid var(--line);font-size:13px"></select>
+      <span class="lbl" style="margin-left:6px">Rank:</span>
+      <div class="grp" id="perfRank">
+        <button data-rank="all" class="active">All</button>
+        <button data-rank="top">Top 10</button>
+        <button data-rank="bottom">Bottom 10</button>
+      </div>
+      <span class="lbl" style="margin-left:6px">Sort:</span>
+      <select id="perfSort" style="padding:5px 9px;border-radius:6px;border:1px solid var(--line);font-size:13px">
+        <option value="lift">By lift</option>
+        <option value="revenue">By revenue</option>
+        <option value="roi">By efficiency (lift × engagement)</option>
+        <option value="date">By date</option>
+        <option value="open">By email open</option>
+      </select>
     </div>
     <div id="perfBars"></div>
     <div class="legend">Lift = avg daily revenue <b>during</b> the promo vs. the 14 days before &amp; after.
-      Bars ranked best to worst. Hover a row for detail.</div>
+      Hover a row for detail. Use the filters to slice by year, rank, or sort order.</div>
+    <div class="legend" id="perfCount" style="font-weight:600"></div>
   </div>
 
   <div class="card" id="chartCard" style="display:none">
-    <h2>Revenue timeline</h2>
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <h2 style="margin:0">Revenue timeline</h2>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input type="file" id="salesFile" accept=".csv,.xlsx,.xlsm" style="display:none"/>
+        <button id="importBtn" onclick="document.getElementById('salesFile').click()"
+          style="background:var(--green);color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer">
+          ⬆ Import sales data
+        </button>
+        <button id="klaviyoBtn" onclick="pullKlaviyo()"
+          style="background:#5b3fa8;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer">
+          ✉ Pull Klaviyo (US)
+        </button>
+        <span id="importStatus" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+    </div>
     <div class="controls">
       <span class="lbl">Range:</span>
       <div class="grp" id="rangeCtl">
-        <button data-range="all" class="active">All</button>
+        <button data-range="all">All</button>
         <button data-range="2025">2025</button>
-        <button data-range="2026">2026</button>
+        <button data-range="2026" class="active">2026</button>
         <button data-range="180">Last 6mo</button>
       </div>
       <span class="lbl" style="margin-left:10px">View:</span>
       <div class="grp" id="aggCtl">
-        <button data-agg="day" class="active">Daily</button>
-        <button data-agg="week">Weekly</button>
+        <button data-agg="day">Daily</button>
+        <button data-agg="week" class="active">Weekly</button>
       </div>
     </div>
     <canvas id="chart" height="120"></canvas>
@@ -115,35 +164,84 @@
     <div class="legend">Revenue total per month with the promo(s) that ran. <b>YoY</b> = change vs the prior year's same month. Months with no sales data are blank.</div>
   </div>
 
+  <div class="card" id="offersCard" style="display:none">
+    <h2>Special offers — weekly</h2>
+    <div class="controls">
+      <span class="lbl">Week:</span>
+      <select id="offerWeek" style="padding:6px 10px;border-radius:6px;border:1px solid var(--line);font-size:13px"></select>
+      <span id="offerSummary" class="lbl" style="margin-left:10px"></span>
+    </div>
+    <table id="offersTable">
+      <thead><tr><th>Strain</th><th>Offer</th><th>Price</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="offerDiff" style="margin-top:14px"></div>
+    <div id="offerGridWrap" style="margin-top:18px;overflow-x:auto"></div>
+    <div class="legend">Scraped weekly (Wednesdays) from barneysfarm.com/us/special-offer-seeds. Pick a week to see its offers and what changed since the prior week; the grid below shows price history across recent weeks.</div>
+  </div>
+
+  </div><!-- /tabOwn -->
+
+  <div id="tabComp" style="display:none">
   <div class="card" id="priceCard" style="display:none">
     <h2>Head-to-head strain prices (latest)</h2>
     <table id="priceTable"><thead><tr id="priceHead"><th>Strain</th></tr></thead><tbody></tbody></table>
     <div class="legend">Compared on <b>per-seed price</b> (pack price ÷ pack size). Lowest highlighted green. OOS = out of stock.</div>
   </div>
 
+  <div class="card" id="compStateCard" style="display:none">
+    <h2>Competitor offers by week</h2>
+    <div class="controls">
+      <span class="lbl">Week:</span>
+      <select id="compWeek" style="padding:6px 10px;border-radius:6px;border:1px solid var(--line);font-size:13px"></select>
+      <span id="compWeekSummary" class="lbl" style="margin-left:10px"></span>
+    </div>
+    <div id="compState"></div>
+    <div id="compDiff" style="margin-top:6px"></div>
+    <div class="legend">Each competitor's offers for the selected week (latest capture that week), with your own special offers included for side-by-side comparison. Pick a past week to see what everyone was running then.</div>
+  </div>
+
   <div class="card" id="changeCard" style="display:none">
     <h2>Competitor promo changes</h2>
     <table id="changeTable"><thead><tr><th>Date</th><th>Site</th><th>What changed</th></tr></thead><tbody></tbody></table>
   </div>
+  </div><!-- /tabComp -->
 
+  <div id="tabOwn2">
   <div class="card" id="salesCard" style="display:none">
-    <h2>Daily sales by month</h2>
+    <h2>Sales by month</h2>
     <div class="controls">
       <span class="lbl">Month:</span>
       <select id="monthSelect" style="padding:6px 10px;border-radius:6px;border:1px solid var(--line);font-size:13px"></select>
+      <span class="lbl" style="margin-left:10px">View:</span>
+      <div class="grp" id="salesAggCtl">
+        <button data-sagg="week" class="active">Weekly</button>
+        <button data-sagg="day">Daily</button>
+      </div>
       <span id="monthSummary" class="lbl" style="margin-left:10px"></span>
     </div>
-    <table id="salesTable"><thead><tr><th>Date</th><th>Revenue</th><th>Orders</th><th>Units</th><th>Promo running</th></tr></thead><tbody></tbody></table>
+    <table id="salesTable"><thead><tr><th>Period</th><th>Revenue</th><th>Orders</th><th>Units</th><th>Promo running</th></tr></thead><tbody></tbody></table>
   </div>
+
+  <div class="card" id="engageCard" style="display:none">
+    <h2>Email engagement over time</h2>
+    <div id="engageChart"></div>
+    <div class="legend">Average campaign open &amp; click rate per month (from Klaviyo). Rising open rates mean your subject lines and list health are improving.</div>
+  </div>
+  </div><!-- /tabOwn2 -->
 </div>
 
 <script>
 const US = "Barney's Farm";
 let DATA = null;            // full payload
 let chart = null;
-let rangeMode = "all";     // all | 2025 | 2026 | 180
-let aggMode = "day";       // day | week
+let rangeMode = "2026";    // all | 2025 | 2026 | 180
+let aggMode = "week";      // day | week
 let perfScope = "major";   // major | all
+let perfYear = "all";      // all | 2024 | 2025 | 2026
+let perfRank = "all";      // all | top | bottom
+let perfSort = "lift";     // lift | revenue | date | open
+let salesAgg = "week";     // week | day  (Sales by month view)
 
 function dayOf(iso){ return (iso||"").slice(0,10); }
 function fmtMoney(v){ return v==null?"—":"$"+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
@@ -161,7 +259,7 @@ function detectChanges(snapshots){
       const day=dayOf(s.captured_at);
       if(prev && s.content_hash!==prev.content_hash && day!==prevDay){
         const fields={};
-        ["discount_text","codes","free_seeds","shipping"].forEach(k=>{
+        ["discount_text","codes","free_seeds","shipping","spend_tiers","promo_ends"].forEach(k=>{
           if((prev[k]||"")!==(s[k]||"")) fields[k]={from:prev[k]||"—",to:s[k]||"—"};
         });
         changes.push({date:day,site,fields});
@@ -281,10 +379,46 @@ function renderChart(){
   document.getElementById("promoLegend").innerHTML = "";
 }
 
+function perfYearOf(p){
+  const d=p.start_date||p.end_date||"";
+  return d? String(d).slice(0,4) : "";
+}
+
+function populatePerfYears(){
+  const sel=document.getElementById("perfYear");
+  if(!sel || sel.dataset.filled) return;
+  const years=[...new Set((DATA.performance||[]).map(perfYearOf).filter(Boolean))].sort().reverse();
+  sel.innerHTML=`<option value="all">All years</option>`+years.map(y=>`<option value="${y}">${y}</option>`).join("");
+  sel.dataset.filled="1";
+}
+
 function renderPerf(){
-  const perf=(DATA.performance||[]).filter(p=> perfScope==="all" ? true : p.is_major!==false);
+  populatePerfYears();
+  let perf=(DATA.performance||[]).filter(p=> perfScope==="all" ? true : p.is_major!==false);
+  // year filter
+  if(perfYear!=="all") perf=perf.filter(p=>perfYearOf(p)===perfYear);
+  // sort
+  const sorters={
+    lift:(a,b)=>(b.lift_pct??-1e9)-(a.lift_pct??-1e9),
+    revenue:(a,b)=>(b.total_revenue||0)-(a.total_revenue||0),
+    roi:(a,b)=>((b.lift_pct||0)*(b.avg_open||0))-((a.lift_pct||0)*(a.avg_open||0)),
+    date:(a,b)=>String(b.start_date||"").localeCompare(String(a.start_date||"")),
+    open:(a,b)=>(b.avg_open??-1)-(a.avg_open??-1),
+  };
+  perf=perf.slice().sort(sorters[perfSort]||sorters.lift);
+  // rank filter (applied after sort by lift so top/bottom are by lift)
+  if(perfRank==="top"||perfRank==="bottom"){
+    const byLift=perf.slice().sort((a,b)=>(b.lift_pct??-1e9)-(a.lift_pct??-1e9));
+    const subset = perfRank==="top" ? byLift.slice(0,10) : byLift.slice(-10);
+    const keep=new Set(subset.map(p=>p.promo_name+(p.start_date||"")));
+    perf=perf.filter(p=>keep.has(p.promo_name+(p.start_date||"")));
+  }
+
   const box=document.getElementById("perfBars");
-  if(!perf.length){ box.innerHTML="<p class=muted>No promo performance data yet.</p>"; return; }
+  const countEl=document.getElementById("perfCount");
+  if(!perf.length){ box.innerHTML="<p class=muted>No promos match these filters.</p>"; if(countEl)countEl.textContent=""; return; }
+  if(countEl) countEl.textContent=`Showing ${perf.length} promo${perf.length>1?"s":""}${perfYear!=="all"?" · "+perfYear:""}${perfRank!=="all"?" · "+perfRank+" 10 by lift":""}`;
+
   const lifts=perf.map(p=>p.lift_pct).filter(v=>v!=null);
   const maxAbs=Math.max(60, ...lifts.map(Math.abs));
   box.innerHTML = perf.map((p,i)=>{
@@ -298,21 +432,24 @@ function renderPerf(){
     const pill = p.is_major===false?'<span class=pill>minor</span>':'';
     const open = p.avg_open!=null?p.avg_open+"%":"—";
     const click = p.avg_click!=null?p.avg_click+"%":"—";
-    const eng = `<div class="eng" title="avg across ${p.email_count||0} emails sent during this promo">📧 ${open} open · ${click} click</div>`;
-    // subjects expandable
+    const dates = (p.start_date&&p.end_date) ? `${p.start_date} → ${p.end_date}` : (p.start_date||"");
+    const disc = p.discount ? `<b>${p.discount}</b> · ` : "";
+    const notesLine = p.notes ? `<div class="perf-notes">${(p.notes||"").replace(/</g,"&lt;")}</div>` : "";
+    const detail = `<div class="perf-detail">${disc}${dates} · ${p.days} days · ${fmtK(p.total_revenue)} total · avg ${p.during_avg?fmtK(p.during_avg):"—"}/day vs ${p.baseline_avg?fmtK(p.baseline_avg):"—"} baseline · 📧 ${open} open · ${click} click (${p.email_count||0} emails)</div>${notesLine}`;
     const subj = (p.subjects&&p.subjects.length)
-      ? `<div class="subjects" id="subj${i}" style="display:none">`+
-        p.subjects.map(s=>`<div class="subj-line">• ${s.replace(/</g,"&lt;")}</div>`).join("")+`</div>`
+      ? `<div class="subj-wrap">`+
+        `<span class="subj-toggle" onclick="var e=this.nextElementSibling;var open=e.style.display==='block';e.style.display=open?'none':'block';this.querySelector('.caret').textContent=open?'▸':'▾';">`+
+        `<span class="caret">▸</span> ${p.subjects.length} email subject${p.subjects.length>1?'s':''}</span>`+
+        `<div class="subjects" style="display:none">`+
+        p.subjects.map(s=>`<div class="subj-line">• ${(s||"").replace(/</g,"&lt;")}</div>`).join("")+`</div></div>`
       : "";
-    const toggle = (p.subjects&&p.subjects.length)
-      ? `<span class="subj-toggle" onclick="var e=document.getElementById('subj${i}');e.style.display=e.style.display==='none'?'block':'none';this.textContent=e.style.display==='none'?'▸ ${p.subjects.length} emails':'▾ hide';">▸ ${p.subjects.length} emails</span>` : "";
     return `<div class="perf-item">
       <div class="bar-row" title="${tip}">
         <div class="nm">${p.promo_name}${pill}</div>
         <div class="bar-wrap"><div class="bar ${neg?'neg':''}" style="width:${w}%"></div></div>
         <div class="val" style="color:${neg?'#d9534f':'var(--green)'}">${val}</div>
       </div>
-      <div class="perf-meta">${eng} ${toggle}</div>
+      ${detail}
       ${subj}
     </div>`;
   }).join("");
@@ -331,17 +468,34 @@ function renderMonthly(){
   if(years.length>=2) head.insertAdjacentHTML("beforeend",`<th>YoY</th>`);
 
   const tb=document.querySelector("#monthlyTable tbody");
+  let uid=0;
   for(let m=1;m<=12;m++){
     const row = md.months[m] || {};
-    // skip months with no data in any year
     if(!years.some(y=>row[y])) continue;
     let tds=`<td><b>${monthNames[m-1]}</b></td>`;
     years.forEach(y=>{
       const c=row[y];
       if(!c){ tds+=`<td class=muted>—</td>`; return; }
-      const promo = c.promos && c.promos.length ? c.promos.join("; ") : "—";
+      const promoList = (c.promos && c.promos.length)
+        ? `<ul style="margin:4px 0 0;padding-left:16px;font-size:11px;color:var(--green)">`
+          + c.promos.map(pn=>{
+              const lab = (typeof pn==="string") ? pn : pn.label;
+              const nt = (typeof pn==="object" && pn.notes) ? `<div style="color:#777;font-style:italic;font-weight:400">${pn.notes.replace(/</g,"&lt;")}</div>` : "";
+              return `<li style="margin:3px 0">${lab}${nt}</li>`;
+            }).join("") + `</ul>`
+        : `<div class=muted style="font-size:11px">—</div>`;
+      const subs = c.subjects||[];
+      uid++;
+      const subToggle = subs.length
+        ? `<span class="subj-toggle" onclick="var e=document.getElementById('msub${uid}');e.style.display=e.style.display==='none'?'block':'none';">▸ ${subs.length} emails</span>` : "";
+      const subBlock = subs.length
+        ? `<div class="subjects" id="msub${uid}" style="display:none">`+
+          subs.map(s=>{
+            const o=s.open_rate!=null?` <span class=muted>(${s.open_rate}% open)</span>`:"";
+            return `<div class="subj-line">• ${(s.subject||"").replace(/</g,"&lt;")}${o}</div>`;
+          }).join("")+`</div>` : "";
       tds+=`<td><b>${fmtK(c.revenue)}</b><div class=muted style="font-size:11px">${c.orders} orders · ${c.days} days</div>`+
-           `<div style="font-size:11px;color:var(--green)">${promo}</div></td>`;
+           `${promoList}${subToggle}${subBlock}</td>`;
     });
     if(years.length>=2){
       const a=row[years[years.length-2]], b=row[years[years.length-1]];
@@ -357,7 +511,228 @@ function renderMonthly(){
   }
 }
 
+function priceCellHTML(o){
+  const cur=o.currency||"$";
+  if(o.price==null) return "—";
+  if(o.is_discounted && o.was_price!=null){
+    return `<span style="color:#d9534f;text-decoration:line-through" class=muted>${cur}${Number(o.was_price).toFixed(2)}</span> `+
+           `<b style="color:var(--green)">${cur}${Number(o.price).toFixed(2)}</b>`;
+  }
+  return `${cur}${Number(o.price).toFixed(2)}`;
+}
+
+function renderOffers(){
+  const all=DATA.special_offers||[];
+  if(!all.length) return;
+  document.getElementById("offersCard").style.display="block";
+
+  // group by week (captured date)
+  const byWeek={};
+  all.forEach(o=>{ const w=dayOf(o.week||o.captured_at); (byWeek[w] ||= []).push(o); });
+  const weeks=Object.keys(byWeek).sort().reverse();   // newest first
+
+  // populate dropdown once
+  const sel=document.getElementById("offerWeek");
+  if(!sel.dataset.filled){
+    sel.innerHTML=weeks.map(w=>`<option value="${w}">${w}</option>`).join("");
+    sel.dataset.filled="1";
+    sel.onchange=()=>drawOfferWeek(sel.value, weeks, byWeek);
+  }
+  drawOfferWeek(sel.value || weeks[0], weeks, byWeek);
+
+  // ---- price grid: strains (rows) x recent weeks (cols) ----
+  const recent=weeks.slice(0,8).reverse();   // up to 8 weeks, oldest->newest
+  const strains=[...new Set(all.map(o=>o.strain))].sort();
+  let gh=`<table style="font-size:12px"><thead><tr><th>Strain</th>`;
+  recent.forEach(w=> gh+=`<th>${w.slice(5)}</th>`);   // MM-DD
+  gh+=`</tr></thead><tbody>`;
+  // count how many weeks each strain appears, to sort sticky ones up
+  const freq={};
+  strains.forEach(s=> freq[s]=recent.filter(w=>byWeek[w].some(o=>o.strain===s)).length);
+  strains.sort((a,b)=> freq[b]-freq[a] || a.localeCompare(b));
+  strains.forEach(s=>{
+    gh+=`<tr><td><b>${s}</b> <span class=muted style="font-size:10px">${freq[s]}/${recent.length}</span></td>`;
+    recent.forEach(w=>{
+      const o=byWeek[w].find(x=>x.strain===s);
+      if(!o||o.price==null){ gh+=`<td class=muted>·</td>`; }
+      else {
+        const cur=o.currency||"$";
+        gh+=`<td>${cur}${Number(o.price).toFixed(2)}</td>`;
+      }
+    });
+    gh+=`</tr>`;
+  });
+  gh+=`</tbody></table>`;
+  document.getElementById("offerGridWrap").innerHTML=
+    `<div style="font-weight:600;font-size:13px;margin-bottom:6px">Discounted price by week <span class=muted style="font-weight:400">(sticky strains first; · = not on offer that week)</span></div>`+gh;
+}
+
+function drawOfferWeek(week, weeks, byWeek){
+  const offers=byWeek[week]||[];
+  const otb=document.querySelector("#offersTable tbody");
+  otb.innerHTML="";
+  offers.slice().sort((a,b)=>a.strain.localeCompare(b.strain)).forEach(o=>{
+    const offerCell=o.offer?`<span style="color:var(--green);font-weight:600">${o.offer}</span>`:`<span class=muted>—</span>`;
+    otb.insertAdjacentHTML("beforeend",
+      `<tr><td><b>${o.strain}</b></td><td>${offerCell}</td><td>${priceCellHTML(o)}</td></tr>`);
+  });
+  const disc=offers.filter(o=>o.is_discounted).length;
+  document.getElementById("offerSummary").textContent=
+    `${offers.length} strains on offer · ${disc} discounted`;
+
+  // ---- diff vs the prior week ----
+  const idx=weeks.indexOf(week);
+  const prevWeek = idx>=0 && idx < weeks.length-1 ? weeks[idx+1] : null;
+  const diffBox=document.getElementById("offerDiff");
+  if(!prevWeek){ diffBox.innerHTML=`<div class=muted style="font-size:12px">No earlier week to compare.</div>`; return; }
+  const prev=byWeek[prevWeek]||[];
+  const curNames=new Set(offers.map(o=>o.strain));
+  const prevNames=new Set(prev.map(o=>o.strain));
+  const added=offers.filter(o=>!prevNames.has(o.strain));
+  const dropped=prev.filter(o=>!curNames.has(o.strain));
+  const changed=[];
+  offers.forEach(o=>{
+    const p=prev.find(x=>x.strain===o.strain);
+    if(p && p.price!=null && o.price!=null && Number(p.price)!==Number(o.price)){
+      changed.push({strain:o.strain, from:Number(p.price), to:Number(o.price), cur:o.currency||"$"});
+    }
+  });
+  let h=`<div style="font-weight:600;font-size:13px;margin-bottom:6px">Changes vs ${prevWeek}</div>`;
+  if(!added.length && !dropped.length && !changed.length){
+    h+=`<div class=muted style="font-size:12px">No changes from the previous week.</div>`;
+  } else {
+    h+=`<div style="font-size:12px;line-height:1.7">`;
+    added.forEach(o=> h+=`<div><span style="color:var(--green)">＋ Added:</span> ${o.strain} (${priceCellHTML(o)})</div>`);
+    dropped.forEach(o=> h+=`<div><span style="color:#d9534f">－ Dropped:</span> ${o.strain}</div>`);
+    changed.forEach(c=>{
+      const dir=c.to<c.from?"↓":"↑"; const col=c.to<c.from?"var(--green)":"#d9534f";
+      h+=`<div><span style="color:${col}">${dir} Price:</span> ${c.strain} ${c.cur}${c.from.toFixed(2)} → ${c.cur}${c.to.toFixed(2)}</div>`;
+    });
+    h+=`</div>`;
+  }
+  diffBox.innerHTML=h;
+}
+
+const COMP_FIELDS=[
+  ["discount_text","Discount"],["free_seeds","Free seeds"],
+  ["spend_tiers","Spend & get"],["codes","Codes"],
+  ["shipping","Shipping"],["promo_ends","Ends"],
+];
+
+function renderCompState(){
+  const cw=DATA.competitor_weeks;
+  if(!cw || !cw.weeks || !cw.weeks.length){
+    // fall back to flat latest-state if weekly grouping unavailable
+    const state=DATA.competitor_state||[];
+    if(!state.length) return;
+    document.getElementById("compStateCard").style.display="block";
+    document.getElementById("compState").innerHTML=compCardsHTML(state);
+    return;
+  }
+  document.getElementById("compStateCard").style.display="block";
+  const sel=document.getElementById("compWeek");
+  if(!sel.dataset.filled){
+    sel.innerHTML=cw.weeks.map(w=>`<option value="${w}">Week of ${w}</option>`).join("");
+    sel.dataset.filled="1";
+    sel.onchange=()=>drawCompWeek(sel.value);
+  }
+  drawCompWeek(sel.value || cw.weeks[0]);
+}
+
+// build our own special offers into a competitor-style card for the given week
+function ourOffersForWeek(week){
+  const all=DATA.special_offers||[];
+  if(!all.length) return null;
+  // find the special-offers capture in the same ISO week
+  const weeksSeen={};
+  all.forEach(o=>{ const d=dayOf(o.week||o.captured_at); weeksSeen[d]=(weeksSeen[d]||0)+1; });
+  // pick the offer-capture date that falls in the selected Monday..Sunday window
+  const mon=new Date(week); const sun=new Date(mon); sun.setDate(mon.getDate()+6);
+  const inWeek=all.filter(o=>{ const d=new Date(dayOf(o.week||o.captured_at)); return d>=mon && d<=sun; });
+  if(!inWeek.length) return null;
+  const disc=inWeek.filter(o=>o.is_discounted).length;
+  const lines=inWeek.map(o=>{
+    const cur=o.currency||"$";
+    const price=o.price!=null?(o.is_discounted&&o.was_price!=null
+      ? `${cur}${Number(o.was_price).toFixed(2)}→${cur}${Number(o.price).toFixed(2)}`
+      : `${cur}${Number(o.price).toFixed(2)}`):"";
+    return `${o.strain}${price?` (${price})`:""}`;
+  });
+  return {
+    competitor: US,
+    captured_at: inWeek[0].week||inWeek[0].captured_at,
+    discount_text: `${inWeek.length} strains on offer${disc?`, ${disc} discounted`:""}`,
+    free_seeds:null, spend_tiers:null, codes:null, shipping:null, promo_ends:null,
+    headline: lines.slice(0,8).join("  •  ")+(lines.length>8?` …(+${lines.length-8})`:""),
+    raw_text: lines.join("\n"),
+  };
+}
+
+function drawCompWeek(week){
+  const cw=DATA.competitor_weeks;
+  let cards=(cw.byWeek[week]||[]).slice();
+  // inject our own special offers for that week (so it's a true side-by-side)
+  const ours=ourOffersForWeek(week);
+  if(ours){ cards=cards.filter(c=>c.competitor!==US); cards.unshift(ours); }
+  document.getElementById("compState").innerHTML=compCardsHTML(cards);
+
+  const summary=`${cards.length} sources captured`;
+  document.getElementById("compWeekSummary").textContent=summary;
+
+  // diff vs prior week
+  const idx=cw.weeks.indexOf(week);
+  const prevWeek = idx>=0 && idx<cw.weeks.length-1 ? cw.weeks[idx+1] : null;
+  const box=document.getElementById("compDiff");
+  if(!prevWeek){ box.innerHTML=`<div class=muted style="font-size:12px">No earlier week to compare.</div>`; return; }
+  const cur=cw.byWeek[week]||[], prev=cw.byWeek[prevWeek]||[];
+  const lines=[];
+  cur.forEach(c=>{
+    const p=prev.find(x=>x.competitor===c.competitor);
+    if(!p){ lines.push(`<div><span style="color:var(--green)">＋</span> ${c.competitor}: first seen this week</div>`); return; }
+    COMP_FIELDS.forEach(([k,label])=>{
+      const a=(p[k]||"").trim(), b=(c[k]||"").trim();
+      if(a!==b){
+        let verb,body;
+        if(!a){verb=`<span style="color:var(--green)">started</span>`;body=b;}
+        else if(!b){verb=`<span style="color:#d9534f">stopped</span>`;body=a;}
+        else {verb="changed";body=`<span class=muted>${a}</span> → ${b}`;}
+        lines.push(`<div><b>${c.competitor}</b> · ${label} ${verb}: ${(body||"").replace(/</g,"&lt;")}</div>`);
+      }
+    });
+  });
+  box.innerHTML = lines.length
+    ? `<div style="font-weight:600;font-size:13px;margin:10px 0 4px">Changes vs week of ${prevWeek}</div><div style="font-size:12px;line-height:1.7">${lines.join("")}</div>`
+    : `<div class=muted style="font-size:12px;margin-top:8px">No changes vs week of ${prevWeek}.</div>`;
+}
+
+function compCardsHTML(cards){
+  return cards.map((c,i)=>{
+    const star = c.competitor===US ? "⭐ " : "";
+    const when = c.captured_at ? `<span class=muted style="font-weight:400;font-size:11px"> · ${dayOf(c.captured_at)}</span>` : "";
+    const head = c.headline ? `<div class=muted style="font-size:12px;margin:2px 0 6px;font-style:italic">${(c.headline||"").replace(/</g,"&lt;")}</div>` : "";
+    const rows = COMP_FIELDS.filter(([k])=>c[k]).map(([k,label])=>
+      `<div style="font-size:12px;margin:2px 0"><b style="color:#555">${label}:</b> <span style="color:var(--green)">${(c[k]||"").replace(/</g,"&lt;")}</span></div>`
+    ).join("");
+    const body = rows || `<div class=muted style="font-size:12px">No active promo detected.</div>`;
+    const copy = (c.raw_text||"").trim();
+    const copyBlock = copy
+      ? `<div style="margin-top:8px">`+
+        `<span class="subj-toggle" onclick="var e=document.getElementById('copy${i}');var open=e.style.display==='block';e.style.display=open?'none':'block';this.querySelector('.caret').textContent=open?'▸':'▾';">`+
+        `<span class="caret">▸</span> show full page copy</span>`+
+        `<div id="copy${i}" style="display:none;margin-top:6px;padding:8px 10px;background:#faf8f5;border-radius:6px;font-size:11px;color:#444;white-space:pre-wrap;max-height:260px;overflow-y:auto">${copy.replace(/</g,"&lt;")}</div>`+
+        `</div>`
+      : "";
+    const border = c.competitor===US ? "2px solid var(--green)" : "1px solid var(--line)";
+    return `<div style="border:${border};border-radius:8px;padding:12px 14px;margin-bottom:10px">
+      <div style="font-weight:700">${star}${c.competitor}${when}</div>${head}${body}${copyBlock}
+    </div>`;
+  }).join("");
+}
+
 function renderStatic(){
+  // special offers — weekly view (dropdown + diff + price grid)
+  renderOffers();
+
   // price matrix
   const prices=DATA.prices||[];
   if(prices.length){
@@ -392,8 +767,15 @@ function renderStatic(){
   if(!changes.length) ctb.innerHTML="<tr><td colspan=3 class=muted>No competitor promo changes detected yet.</td></tr>";
   changes.slice(0,40).forEach(c=>{
     const desc=Object.entries(c.fields).map(([k,v])=>{
-      const lbl={discount_text:"Discount",codes:"Codes",free_seeds:"Free seeds",shipping:"Shipping"}[k]||k;
-      return `<div><b>${lbl}:</b> <span class=muted>${v.from}</span> → ${v.to}</div>`;}).join("")||"<span class=muted>changed</span>";
+      const lbl={discount_text:"Discount",codes:"Codes",free_seeds:"Free seeds",
+                 shipping:"Shipping",spend_tiers:"Spend & get",promo_ends:"Ends"}[k]||k;
+      // plain-language framing: started / stopped / changed
+      let verb, body;
+      if(v.from==="—"){ verb=`<span style="color:var(--green)">started</span>`; body=v.to; }
+      else if(v.to==="—"){ verb=`<span style="color:#d9534f">stopped</span>`; body=v.from; }
+      else { verb="changed"; body=`<span class=muted>${v.from}</span> → ${v.to}`; }
+      return `<div style="margin:2px 0"><b>${lbl}</b> ${verb}: ${body}</div>`;
+    }).join("")||"<span class=muted>changed</span>";
     const site=c.site===US?`<span class="us">⭐ ${c.site}</span>`:c.site;
     ctb.insertAdjacentHTML("beforeend",`<tr class="chg"><td>${c.date}</td><td>${site}</td><td>${desc}</td></tr>`);
   });
@@ -433,24 +815,94 @@ function promoOn(day){
   return "";
 }
 
+function emailOn(day){
+  const cs=DATA.campaigns||[];
+  return cs.filter(c=>dayOf(c.send_date)===day);
+}
+
 function drawMonth(month){
+  if(salesAgg==="week") return drawMonthWeekly(month);
   const sales=(DATA.sales||[]).filter(s=>dayOf(s.sale_date).slice(0,7)===month)
                               .sort((a,b)=>dayOf(a.sale_date).localeCompare(dayOf(b.sale_date)));
   const stb=document.querySelector("#salesTable tbody");
   stb.innerHTML="";
   let rev=0, ord=0;
   sales.forEach(s=>{
+    const day=dayOf(s.sale_date);
     rev+=s.revenue==null?0:Number(s.revenue);
     ord+=s.orders==null?0:Number(s.orders);
-    const promo = promoOn(dayOf(s.sale_date)) || (s.note||"").trim();
-    const promoCell = promo
-      ? `<td style="color:var(--green);font-weight:600">${promo}</td>` : `<td class=muted></td>`;
+    const promo = promoOn(day) || (s.note||"").trim();
+    const emails = emailOn(day);
+    let promoHtml = promo ? `<div style="color:var(--green);font-weight:600">${promo}</div>` : "";
+    if(emails.length){
+      promoHtml += emails.map(e=>{
+        const o=e.open_rate!=null?` <span class=muted>(${e.open_rate}% open)</span>`:"";
+        return `<div style="font-size:11px;color:#555">📧 ${(e.subject||"").replace(/</g,"&lt;")}${o}</div>`;
+      }).join("");
+    }
+    const promoCell = promoHtml ? `<td>${promoHtml}</td>` : `<td class=muted></td>`;
     stb.insertAdjacentHTML("beforeend",
-      `<tr><td>${dayOf(s.sale_date)}</td><td>${fmtMoney(s.revenue)}</td><td>${s.orders??"—"}</td><td>${s.units??"—"}</td>${promoCell}</tr>`);
+      `<tr><td>${day}</td><td>${fmtMoney(s.revenue)}</td><td>${s.orders??"—"}</td><td>${s.units??"—"}</td>${promoCell}</tr>`);
   });
   const avg = sales.length? rev/sales.length : 0;
   document.getElementById("monthSummary").textContent =
     `${sales.length} days · ${fmtK(rev)} total · ${fmtK(avg)}/day avg · ${ord} orders`;
+}
+
+// ISO week start (Monday) for a YYYY-MM-DD string
+function weekStartOf(day){
+  const d=new Date(day+"T00:00:00");
+  const wd=(d.getDay()+6)%7; // Mon=0
+  d.setDate(d.getDate()-wd);
+  return d.toISOString().slice(0,10);
+}
+
+function drawMonthWeekly(month){
+  // include all days whose week overlaps the month; group by week-start
+  const sales=(DATA.sales||[]).filter(s=>dayOf(s.sale_date).slice(0,7)===month)
+                              .sort((a,b)=>dayOf(a.sale_date).localeCompare(dayOf(b.sale_date)));
+  const stb=document.querySelector("#salesTable tbody");
+  stb.innerHTML="";
+  if(!sales.length){ stb.innerHTML="<tr><td colspan=5 class=muted>No sales this month.</td></tr>"; document.getElementById("monthSummary").textContent=""; return; }
+  const weeks={};
+  sales.forEach(s=>{
+    const day=dayOf(s.sale_date);
+    const wk=weekStartOf(day);
+    (weeks[wk] ||= {rev:0,ord:0,units:0,days:0,promos:new Set(),emails:[]});
+    const w=weeks[wk];
+    w.rev+=s.revenue==null?0:Number(s.revenue);
+    w.ord+=s.orders==null?0:Number(s.orders);
+    w.units+=s.units==null?0:Number(s.units);
+    w.days++;
+    const promo=promoOn(day)||(s.note||"").trim();
+    if(promo) w.promos.add(promo);
+    emailOn(day).forEach(e=>w.emails.push(e));
+  });
+  let totRev=0, totOrd=0;
+  Object.keys(weeks).sort().forEach(wk=>{
+    const w=weeks[wk];
+    totRev+=w.rev; totOrd+=w.ord;
+    const wkEnd=(()=>{ const d=new Date(wk+"T00:00:00"); d.setDate(d.getDate()+6); return d.toISOString().slice(0,10); })();
+    const label=`${wk} → ${wkEnd.slice(5)}`;
+    let promoHtml = w.promos.size ? [...w.promos].map(p=>`<div style="color:var(--green);font-weight:600">${p}</div>`).join("") : "";
+    if(w.emails.length){
+      // dedupe email subjects within the week
+      const seen=new Set();
+      w.emails.forEach(e=>{
+        const key=(e.subject||"").trim();
+        if(seen.has(key)) return; seen.add(key);
+        const o=e.open_rate!=null?` <span class=muted>(${e.open_rate}% open)</span>`:"";
+        promoHtml+=`<div style="font-size:11px;color:#555">📧 ${(e.subject||"").replace(/</g,"&lt;")}${o}</div>`;
+      });
+    }
+    const promoCell = promoHtml ? `<td>${promoHtml}</td>` : `<td class=muted></td>`;
+    stb.insertAdjacentHTML("beforeend",
+      `<tr><td><b>${label}</b> <span class=muted style="font-size:11px">(${w.days}d)</span></td>`+
+      `<td><b>${fmtMoney(w.rev)}</b></td><td>${w.ord}</td><td>${w.units||"—"}</td>${promoCell}</tr>`);
+  });
+  const nWeeks=Object.keys(weeks).length;
+  document.getElementById("monthSummary").textContent =
+    `${nWeeks} week${nWeeks>1?"s":""} · ${fmtK(totRev)} total · ${fmtK(totRev/nWeeks)}/wk avg · ${totOrd} orders`;
 }
 
 function wireControls(){
@@ -469,18 +921,166 @@ function wireControls(){
     document.querySelectorAll("#perfScope button").forEach(x=>x.classList.remove("active"));
     b.classList.add("active"); renderPerf();
   });
+  document.querySelectorAll("#perfRank button").forEach(b=>b.onclick=()=>{
+    perfRank=b.dataset.rank;
+    document.querySelectorAll("#perfRank button").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active"); renderPerf();
+  });
+  const py=document.getElementById("perfYear"); if(py) py.onchange=()=>{ perfYear=py.value; renderPerf(); };
+  const ps=document.getElementById("perfSort"); if(ps) ps.onchange=()=>{ perfSort=ps.value; renderPerf(); };
+  document.querySelectorAll("#salesAggCtl button").forEach(b=>b.onclick=()=>{
+    salesAgg=b.dataset.sagg;
+    document.querySelectorAll("#salesAggCtl button").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active");
+    const sel=document.getElementById("monthSelect"); drawMonth(sel.value);
+  });
+}
+
+function setTab(tab){
+  document.querySelectorAll(".tabbar .tab").forEach(b=>b.classList.toggle("active", b.dataset.tab===tab));
+  // own cards live in #tabOwn and #tabOwn2; competitor cards in #tabComp
+  const showOwn = tab==="own";
+  ["tabOwn","tabOwn2"].forEach(id=>{ const e=document.getElementById(id); if(e) e.style.display=showOwn?"block":"none"; });
+  const comp=document.getElementById("tabComp"); if(comp) comp.style.display=showOwn?"none":"block";
+}
+
+function pullKlaviyo(){
+  const status=document.getElementById("importStatus");
+  const btn=document.getElementById("klaviyoBtn");
+  btn.disabled=true; const old=btn.textContent; btn.textContent="Pulling…";
+  status.style.color="var(--muted)"; status.textContent="Pulling US Klaviyo campaigns from Supermetrics…";
+  fetch("/api/pull-klaviyo",{method:"POST"})
+    .then(async r=>{
+      const txt=await r.text();
+      let d; try{ d=JSON.parse(txt); }catch(_){ d={error:(txt||"").slice(0,200)||("HTTP "+r.status)}; }
+      if(!r.ok||d.error){ throw new Error(d.error||("HTTP "+r.status)); }
+      status.style.color="var(--green)";
+      status.textContent=`✓ Pulled ${d.imported} US campaigns${d.range?" ("+d.range+")":""}. Refreshing…`;
+      setTimeout(()=>location.reload(), 1400);
+    })
+    .catch(e=>{
+      status.style.color="#d9534f";
+      status.textContent="✕ "+e.message;
+      btn.disabled=false; btn.textContent=old;
+    });
+}
+
+function wireImport(){
+  const input=document.getElementById("salesFile");
+  const status=document.getElementById("importStatus");
+  const btn=document.getElementById("importBtn");
+  if(!input) return;
+  input.onchange=async()=>{
+    const file=input.files[0];
+    if(!file) return;
+    btn.disabled=true; const old=btn.textContent; btn.textContent="Importing…";
+    status.style.color="var(--muted)"; status.textContent=`Uploading ${file.name}…`;
+    try{
+      const fd=new FormData(); fd.append("file", file);
+      const r=await fetch("/api/upload-sales",{method:"POST",body:fd});
+      const txt=await r.text();
+      let d; try{ d=JSON.parse(txt); }catch(_){ d={error:(txt||"").slice(0,200)||("HTTP "+r.status)}; }
+      if(!r.ok||d.error){ throw new Error(d.error||("HTTP "+r.status)); }
+      status.style.color="var(--green)";
+      status.textContent=`✓ Imported ${d.imported} days (${d.range||""}). Refreshing…`;
+      setTimeout(()=>location.reload(), 1200);
+    }catch(e){
+      status.style.color="#d9534f";
+      status.textContent="✕ "+e.message;
+      btn.disabled=false; btn.textContent=old;
+    }
+    input.value="";
+  };
+}
+
+function renderKPIs(){
+  const sales=(DATA.sales||[]).slice().sort((a,b)=>dayOf(a.sale_date).localeCompare(dayOf(b.sale_date)));
+  if(!sales.length) return;
+  document.getElementById("kpiCard").style.display="block";
+  // monthly totals
+  const byMonth={};
+  sales.forEach(s=>{ const m=dayOf(s.sale_date).slice(0,7); (byMonth[m]??=0); byMonth[m]+=s.revenue==null?0:Number(s.revenue); });
+  const months=Object.keys(byMonth).sort();
+  const cur=months[months.length-1], prev=months[months.length-2];
+  const curRev=byMonth[cur]||0, prevRev=prev?byMonth[prev]:0;
+  // same month last year
+  const [cy,cm]=cur.split("-"); const lastYr=`${+cy-1}-${cm}`;
+  const lyRev=byMonth[lastYr];
+  const momPct = prevRev? Math.round((curRev-prevRev)/prevRev*100):null;
+  const yoyPct = lyRev? Math.round((curRev-lyRev)/lyRev*100):null;
+  // active promo today
+  const today=new Date().toISOString().slice(0,10);
+  const active=(DATA.promos||[]).find(p=> today>=dayOf(p.start_date) && today<=dayOf(p.end_date||p.start_date));
+  // best promo by lift
+  const best=(DATA.performance||[]).filter(p=>p.lift_pct!=null).sort((a,b)=>b.lift_pct-a.lift_pct)[0];
+  const monthName=new Date(cur+"-01").toLocaleString(undefined,{month:"short",year:"numeric"});
+
+  const cell=(label,value,sub,color)=>`<div style="padding:16px 18px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)">
+      <div class=muted style="font-size:11px;text-transform:uppercase;letter-spacing:.5px">${label}</div>
+      <div style="font-size:22px;font-weight:800;margin-top:4px;color:${color||'var(--ink,#222)'}">${value}</div>
+      <div class=muted style="font-size:11px;margin-top:2px">${sub||""}</div>
+    </div>`;
+  const pctColor=v=>v==null?'#888':(v>=0?'var(--green)':'#d9534f');
+  const pctStr=v=>v==null?'—':(v>0?'+':'')+v+'%';
+
+  document.getElementById("kpiStrip").innerHTML=
+    cell(`${monthName} revenue`, fmtK(curRev), `${sales.filter(s=>dayOf(s.sale_date).slice(0,7)===cur).length} days so far`)+
+    cell("vs last month", pctStr(momPct), prev?`${fmtK(prevRev)} in ${new Date(prev+"-01").toLocaleString(undefined,{month:"short"})}`:"—", pctColor(momPct))+
+    cell("vs last year", pctStr(yoyPct), lyRev?`${fmtK(lyRev)} in ${new Date(lastYr+"-01").toLocaleString(undefined,{month:"short",year:"2-digit"})}`:"no data", pctColor(yoyPct))+
+    cell("Active promo", active?(active.promo_name.length>22?active.promo_name.slice(0,22)+"…":active.promo_name):"None", active&&active.discount?active.discount:(active?"running":"no promo today"), active?'var(--green)':'#888')+
+    cell("Best promo ever", best?('+'+best.lift_pct+'%'):"—", best?(best.promo_name.length>24?best.promo_name.slice(0,24)+"…":best.promo_name):"", 'var(--green)');
+}
+
+function renderEngagement(){
+  const cs=(DATA.campaigns||[]).filter(c=>c.open_rate!=null && c.send_date);
+  const card=document.getElementById("engageCard");
+  if(!cs.length){ if(card) card.style.display="none"; return; }
+  if(card) card.style.display="block";
+  // group by month: avg open, avg click, count
+  const byMonth={};
+  cs.forEach(c=>{ const m=dayOf(c.send_date).slice(0,7);
+    (byMonth[m] ??= {open:0,click:0,n:0,cn:0});
+    byMonth[m].open+=Number(c.open_rate)||0; byMonth[m].n++;
+    if(c.click_rate!=null){ byMonth[m].click+=Number(c.click_rate); byMonth[m].cn++; }
+  });
+  const months=Object.keys(byMonth).sort().slice(-15);
+  if(!months.length) return;
+  const maxOpen=Math.max(...months.map(m=>byMonth[m].open/byMonth[m].n), 40);
+  const W=Math.max(600, months.length*54), H=200, pad=34;
+  const x=i=>pad+ i*((W-pad*2)/Math.max(1,months.length-1));
+  const yO=v=>H-pad-(v/maxOpen)*(H-pad*2);
+  const openPts=months.map((m,i)=>`${x(i)},${yO(byMonth[m].open/byMonth[m].n)}`).join(" ");
+  const clickPts=months.map((m,i)=>{const d=byMonth[m]; return `${x(i)},${yO(d.cn?d.click/d.cn:0)}`;}).join(" ");
+  let svg=`<svg viewBox="0 0 ${W} ${H+24}" style="width:100%;height:auto;font-family:inherit">`;
+  [0,.25,.5,.75,1].forEach(f=>{ const yy=H-pad-f*(H-pad*2); const lab=Math.round(maxOpen*f);
+    svg+=`<line x1="${pad}" y1="${yy}" x2="${W-pad}" y2="${yy}" stroke="#eee"/><text x="4" y="${yy+3}" font-size="9" fill="#999">${lab}%</text>`; });
+  months.forEach((m,i)=>{ if(i%Math.ceil(months.length/8||1)===0||i===months.length-1)
+    svg+=`<text x="${x(i)}" y="${H+2}" font-size="9" fill="#999" text-anchor="middle">${m.slice(2)}</text>`; });
+  svg+=`<polyline points="${openPts}" fill="none" stroke="#1B5E20" stroke-width="2"/>`;
+  svg+=`<polyline points="${clickPts}" fill="none" stroke="#C89B3C" stroke-width="2"/>`;
+  months.forEach((m,i)=>{ svg+=`<circle cx="${x(i)}" cy="${yO(byMonth[m].open/byMonth[m].n)}" r="2.5" fill="#1B5E20"/>`; });
+  svg+=`</svg>`;
+  document.getElementById("engageChart").innerHTML=svg+
+    `<div style="font-size:12px;margin-top:6px"><span style="color:#1B5E20">■</span> Avg open rate &nbsp; <span style="color:#C89B3C">■</span> Avg click rate</div>`;
 }
 
 function render(data){
   DATA=data;
   document.getElementById("status").style.display="none";
+  document.getElementById("tabBar").style.display="flex";
   document.getElementById("perfCard").style.display="block";
   document.getElementById("chartCard").style.display="block";
   wireControls();
+  wireImport();
+  document.querySelectorAll(".tabbar .tab").forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
+  renderKPIs();
   renderPerf();
   renderChart();
   renderMonthly();
+  renderCompState();
   renderStatic();
+  renderEngagement();
+  setTab("own");   // default tab
 }
 
 fetch("/api/data")
