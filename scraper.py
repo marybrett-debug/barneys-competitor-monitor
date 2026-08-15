@@ -417,12 +417,22 @@ def scrape_special_offers():
                     if (!name) return;            // skip image-only <a> (same card has a text <a>)
                     if (seen.has(id)) return;
                     seen.add(id);
-                    // walk up to a card container that holds the price text
-                    let card = a;
-                    for (let i = 0; i < 6 && card && card.parentElement; i++) {
-                      card = card.parentElement;
-                      const t = card.innerText || '';
-                      if (/\d+\.\d{2}/.test(t)) break;   // found the price area
+                    // walk up to the element that holds the price...
+                    let priceEl = a;
+                    for (let i = 0; i < 6 && priceEl && priceEl.parentElement; i++) {
+                      priceEl = priceEl.parentElement;
+                      if (/\d+\.\d{2}/.test(priceEl.innerText || '')) break;
+                    }
+                    // ...then go up a couple more levels to include the BOGO/offer
+                    // badge, which sits above the price inside the full product card.
+                    let card = priceEl;
+                    for (let j = 0; j < 3 && card && card.parentElement; j++) {
+                      const up = card.parentElement;
+                      const t = up.innerText || '';
+                      // stop if we've grown big enough to swallow neighbouring cards
+                      if ((t.match(/\d+\.\d{2}/g) || []).length > 1 && j >= 1) break;
+                      card = up;
+                      if (/BOGO/i.test(t)) break;   // captured the badge — good
                     }
                     const text = (card ? card.innerText : a.innerText) || '';
                     out.push({ id, name, block_text: text, href });
@@ -469,9 +479,13 @@ def scrape_special_offers():
             try: pack = int(pm.group(1))
             except ValueError: pack = None
 
-        # BOGO badge: "BOGO 10+10", "BOGO 5+5", "BOGO 3+3", or generic
-        bogo = re.search(r"BOGO\s*\d+\s*\+\s*\d+", block, re.I) or re.search(r"\bBOGO\b", block, re.I)
-        bogo_txt = bogo.group(0).upper().replace("  ", " ") if bogo else None
+        # BOGO badge: only trust it if this block covers a SINGLE product
+        # (one price cluster) — avoids grabbing a neighbour's badge.
+        price_clusters = len(re.findall(r"\d+\.\d{2}", block))
+        bogo_txt = None
+        if price_clusters <= 2:   # one product shows 1 (plain) or 2 (was/now) prices
+            bogo = re.search(r"BOGO\s*\d+\s*\+\s*\d+", block, re.I) or re.search(r"\bBOGO\b", block, re.I)
+            bogo_txt = bogo.group(0).upper().replace("  ", " ") if bogo else None
 
         # OFFER = deal type (BOGO or Sale); DISCOUNT % handled separately in the dashboard
         offer = bogo_txt
