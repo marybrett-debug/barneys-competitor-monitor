@@ -23,6 +23,15 @@
   .card > .card-head{cursor:pointer;user-select:none}
   .card.collapsed > h2 .card-caret, .card.collapsed > .card-head h2 .card-caret{transform:rotate(-90deg)}
   .card.collapsed > *:not(h2):not(.card-head){display:none !important}
+  .rhythm-btn{font:inherit;font-size:12.5px;color:var(--muted);background:#fff;border:1px solid var(--line);padding:6px 12px;border-radius:8px;cursor:pointer}
+  .rhythm-btn:hover{border-color:var(--muted)}
+  .rhythm-li{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border:1px solid var(--line);background:#fff;border-radius:999px;font-size:12.5px;color:var(--muted);cursor:pointer;user-select:none}
+  .rhythm-li.off{opacity:.38}
+  .rhythm-li .sw{width:11px;height:11px;border-radius:3px;flex:none}
+  #rhythmTip{position:fixed;z-index:50;pointer-events:none;background:#fff;border:1px solid var(--line);box-shadow:0 6px 20px rgba(0,0,0,.12);border-radius:10px;padding:9px 11px;font-size:12px;min-width:140px;opacity:0;transition:opacity .08s}
+  #rhythmTip.on{opacity:1}
+  #rhythmTip .tr{display:flex;align-items:center;gap:8px;justify-content:space-between;padding:1.5px 0}
+  #rhythmTip .dot{width:9px;height:9px;border-radius:3px;flex:none}
   .card h2{font-size:15px;margin:0 0 12px;color:#555}
   table{border-collapse:collapse;width:100%;font-size:13px}
   th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left}
@@ -75,7 +84,7 @@
     <h1>BARNEY'S FARM</h1>
     <p>Promo &amp; Sales Intelligence · Higher and Higher</p>
   </div>
-  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.8.0</span>
+  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.9.0</span>
 </header>
 
 <div class="wrap">
@@ -166,10 +175,29 @@
     </div>
   </div>
 
-  <div class="card" id="monthlyCard" style="display:none">
-    <h2>Month-by-month: year-over-year</h2>
-    <div class="controls" style="flex-wrap:wrap;gap:10px">
-      <span class="lbl">Years:</span>
+  <div class="card" id="rhythmCard" style="display:none">
+    <h2>Weekly sales rhythm</h2>
+    <div class="legend" style="margin-top:-4px">Each week laid Sunday→Saturday and overlaid, so the recurring shape of the week stands out. Click a week to toggle it; hover for daily figures.</div>
+    <div id="rhythmStats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:14px 0 16px"></div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button id="rhythmAll" class="rhythm-btn">Show all</button>
+      <button id="rhythmLatest" class="rhythm-btn">Latest week only</button>
+      <span style="flex:1"></span>
+      <span class="lbl">Weeks:</span>
+      <select id="rhythmCount" style="padding:5px 9px;border-radius:6px;border:1px solid var(--line);font-size:13px">
+        <option value="6">Last 6</option>
+        <option value="8" selected>Last 8</option>
+        <option value="12">Last 12</option>
+        <option value="99">All</option>
+      </select>
+    </div>
+    <div id="rhythmLegend" style="display:flex;flex-wrap:wrap;gap:8px 10px;margin-bottom:14px"></div>
+    <div style="margin-bottom:8px"><b style="font-size:14px">Orders per day</b> <span class=muted style="font-size:12px">· count</span></div>
+    <svg id="rhythmOrders" style="width:100%;display:block;touch-action:none" preserveAspectRatio="none"></svg>
+    <div style="margin:16px 0 8px"><b style="font-size:14px">Revenue per day</b> <span class=muted style="font-size:12px">· net total (USD)</span></div>
+    <svg id="rhythmRevenue" style="width:100%;display:block;touch-action:none" preserveAspectRatio="none"></svg>
+    <div class="legend">Days grouped Sunday–Saturday. A partial current week shows only the days imported so far.</div>
+  </div>
       <div class="grp" id="monthlyYears"></div>
       <span class="lbl" style="margin-left:6px">Months:</span>
       <select id="monthlyMonthFilter" style="padding:5px 9px;border-radius:6px;border:1px solid var(--line);font-size:13px">
@@ -1182,6 +1210,15 @@ function wireControls(){
   const osrt=document.getElementById("offerSort"); if(osrt) osrt.onchange=()=>{
     offerSort=osrt.value; const sel=document.getElementById("offerWeek"); drawOfferWeek(sel.value);
   };
+  const rAll=document.getElementById("rhythmAll"); if(rAll) rAll.onclick=()=>{ rhythmHidden.clear(); rhRenderLegend(); rhRenderAll(); };
+  const rLatest=document.getElementById("rhythmLatest"); if(rLatest) rLatest.onclick=()=>{
+    rhythmHidden.clear(); rhythmWeeks.forEach(w=>{ if(!w.isLast) rhythmHidden.add(w.id); }); rhRenderLegend(); rhRenderAll();
+  };
+  const rCount=document.getElementById("rhythmCount"); if(rCount) rCount.onchange=()=>{
+    rhythmCount=parseInt(rCount.value,10); rhythmHidden.clear(); renderRhythm();
+  };
+  rhAttachHover("rhythmOrders","orders", v=>v.toLocaleString());
+  rhAttachHover("rhythmRevenue","rev", v=>"$"+v.toLocaleString(undefined,{maximumFractionDigits:0}));
 }
 
 function setTab(tab){
@@ -1296,6 +1333,138 @@ function renderKPIs(){
     cell("Best promo ever", best?('+'+best.lift_pct+'%'):"—", best?(best.promo_name.length>24?best.promo_name.slice(0,24)+"…":best.promo_name):"", 'var(--green)');
 }
 
+// ===== Weekly Sales Rhythm =====
+const RH_DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const RH_COLORS=["#2a78d6","#eb6834","#1baf7a","#eda100","#e87ba4","#008300","#4a3aa7","#c0392b","#16a085","#8e44ad","#d35400","#2980b9"];
+let rhythmWeeks=[], rhythmHidden=new Set(), rhythmCount=8;
+
+function buildRhythmWeeks(){
+  const sales=(DATA.sales||[]).filter(s=>s.orders!=null||s.revenue!=null);
+  if(!sales.length){ rhythmWeeks=[]; return; }
+  // group by week starting Sunday
+  const byWeek={};
+  sales.forEach(s=>{
+    const d=new Date(dayOf(s.sale_date)+"T00:00:00");
+    const dow=d.getDay();                       // 0=Sun
+    const sunday=new Date(d); sunday.setDate(d.getDate()-dow);
+    const wkKey=sunday.toISOString().slice(0,10);
+    (byWeek[wkKey] ||= {orders:[null,null,null,null,null,null,null], rev:[null,null,null,null,null,null,null]});
+    byWeek[wkKey].orders[dow]=s.orders!=null?Number(s.orders):null;
+    byWeek[wkKey].rev[dow]=s.revenue!=null?Number(s.revenue):null;
+  });
+  const keys=Object.keys(byWeek).sort();        // oldest->newest
+  const recent=keys.slice(-rhythmCount);
+  rhythmWeeks=recent.map((k,idx)=>{
+    const sunday=new Date(k+"T00:00:00");
+    const label="Wk of "+sunday.toLocaleDateString(undefined,{month:"short",day:"numeric"});
+    const short=sunday.toLocaleDateString(undefined,{month:"short",day:"numeric"});
+    const w=byWeek[k];
+    const partial = w.orders.some(v=>v==null);
+    return {id:idx, key:k, label, short, color:RH_COLORS[idx%RH_COLORS.length],
+            orders:w.orders, rev:w.rev, partial, isLast: idx===recent.length-1};
+  });
+}
+
+function rhNiceMax(v){ const p=Math.pow(10,Math.floor(Math.log10(v)));const n=v/p;
+  const step=n<=1?1:n<=2?2:n<=2.5?2.5:n<=5?5:10; return step*p; }
+
+function rhBuild(svgId,key,tickFmt){
+  const svg=document.getElementById(svgId);
+  const W=900,H=300,ml=52,mr=16,mt=16,mb=34, iw=W-ml-mr, ih=H-mt-mb;
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`); svg.innerHTML="";
+  const NS="http://www.w3.org/2000/svg";
+  const mk=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
+  let maxV=0; rhythmWeeks.forEach(wk=>{ if(!rhythmHidden.has(wk.id)) wk[key].forEach(v=>{if(v!=null&&v>maxV)maxV=v;});});
+  maxV=rhNiceMax(maxV||1);
+  const x=i=>ml+(iw*i)/6, y=v=>mt+ih-(ih*v)/maxV;
+  for(let t=0;t<=4;t++){ const val=maxV*t/4, gy=y(val);
+    svg.appendChild(mk("line",{x1:ml,y1:gy,x2:W-mr,y2:gy,stroke:"var(--line)","stroke-width":1}));
+    const lab=mk("text",{x:ml-9,y:gy+4,"text-anchor":"end","font-size":11,fill:"var(--muted)"}); lab.textContent=tickFmt(val); svg.appendChild(lab); }
+  RH_DOW.forEach((d,i)=>{ const tx=mk("text",{x:x(i),y:H-12,"text-anchor":"middle","font-size":12,fill:"var(--muted)"}); tx.textContent=d; svg.appendChild(tx); });
+  rhythmWeeks.forEach(wk=>{
+    if(rhythmHidden.has(wk.id)) return;
+    const pts=[]; wk[key].forEach((v,i)=>{ if(v!=null) pts.push([x(i),y(v)]); });
+    if(!pts.length) return;
+    const emph=wk.isLast;
+    const dPath=pts.map((p,i)=>(i?"L":"M")+p[0].toFixed(1)+" "+p[1].toFixed(1)).join(" ");
+    svg.appendChild(mk("path",{d:dPath,fill:"none",stroke:wk.color,"stroke-width":emph?2.8:2,
+      "stroke-linejoin":"round","stroke-linecap":"round",opacity:emph?1:.85}));
+    pts.forEach(p=> svg.appendChild(mk("circle",{cx:p[0],cy:p[1],r:emph?3.6:2.8,fill:wk.color,stroke:"#fff","stroke-width":1.5})));
+  });
+}
+
+function rhRenderAll(){
+  if(!rhythmWeeks.length) return;
+  rhBuild("rhythmOrders","orders", v=>Math.round(v).toString());
+  rhBuild("rhythmRevenue","rev", v=> v>=1000?"$"+(v/1000).toFixed(v%1000?1:0)+"k":"$"+Math.round(v));
+}
+
+function rhRenderLegend(){
+  const box=document.getElementById("rhythmLegend"); box.innerHTML="";
+  rhythmWeeks.forEach(wk=>{
+    const li=document.createElement("div");
+    li.className="rhythm-li"+(rhythmHidden.has(wk.id)?" off":"");
+    li.innerHTML=`<span class="sw" style="background:${wk.color}"></span>${wk.label}`+(wk.partial?` <span class=muted style="font-size:10px;text-transform:uppercase">partial</span>`:"");
+    li.onclick=()=>{ if(rhythmHidden.has(wk.id)) rhythmHidden.delete(wk.id); else rhythmHidden.add(wk.id); rhRenderLegend(); rhRenderAll(); };
+    box.appendChild(li);
+  });
+}
+
+function rhRenderStats(){
+  const full=rhythmWeeks.filter(w=>!w.partial);
+  const totOrders=rhythmWeeks.reduce((s,w)=>s+w.orders.reduce((a,v)=>a+(v||0),0),0);
+  const totRev=rhythmWeeks.reduce((s,w)=>s+w.rev.reduce((a,v)=>a+(v||0),0),0);
+  let peakI=0,lowI=0;
+  if(full.length){
+    const dowAvg=RH_DOW.map((_,i)=>{ const vals=full.map(w=>w.orders[i]).filter(v=>v!=null); return vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:0; });
+    peakI=dowAvg.indexOf(Math.max(...dowAvg)); lowI=dowAvg.indexOf(Math.min(...dowAvg));
+    var peakAvg=Math.round(dowAvg[peakI]), lowAvg=Math.round(dowAvg[lowI]);
+  }
+  const stat=(k,v,s)=>`<div style="background:var(--surface,#faf9f6);border:1px solid var(--line);border-radius:12px;padding:12px 14px">
+    <div class=muted style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">${k}</div>
+    <div style="font-size:20px;font-weight:700">${v}${s?` <span class=muted style="font-size:12px">${s}</span>`:""}</div></div>`;
+  document.getElementById("rhythmStats").innerHTML=
+    stat("Total orders", totOrders.toLocaleString(),"")+
+    stat("Total revenue", "$"+Math.round(totRev).toLocaleString(),"")+
+    stat("Busiest day", full.length?RH_DOW[peakI]:"—", full.length?peakAvg+" avg":"")+
+    stat("Quietest day", full.length?RH_DOW[lowI]:"—", full.length?lowAvg+" avg":"");
+}
+
+function rhAttachHover(svgId,key,fmt){
+  const svg=document.getElementById(svgId); const tip=document.getElementById("rhythmTip");
+  const NS="http://www.w3.org/2000/svg";
+  const mk=(t,a)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e;};
+  let cross=null,dots=[];
+  const clear=()=>{ if(cross){cross.remove();cross=null;} dots.forEach(d=>d.remove()); dots=[]; tip.classList.remove("on"); };
+  svg.addEventListener("pointermove",e=>{
+    const W=900,ml=52,mr=16,mt=16,mb=34,H=300,iw=W-ml-mr,ih=H-mt-mb;
+    const r=svg.getBoundingClientRect(); const px=(e.clientX-r.left)/r.width*W;
+    let i=Math.round((px-ml)/(iw/6)); i=Math.max(0,Math.min(6,i));
+    const x=ml+(iw*i)/6; clear();
+    cross=mk("line",{x1:x,y1:mt,x2:x,y2:H-mb,stroke:"var(--muted)","stroke-width":1,"stroke-dasharray":"3 3",opacity:.7}); svg.appendChild(cross);
+    let maxV=0; rhythmWeeks.forEach(wk=>{ if(!rhythmHidden.has(wk.id)) wk[key].forEach(v=>{if(v!=null&&v>maxV)maxV=v;});}); maxV=rhNiceMax(maxV||1);
+    const rows=[];
+    rhythmWeeks.forEach(wk=>{ if(rhythmHidden.has(wk.id))return; const v=wk[key][i]; if(v==null)return;
+      const y=mt+ih-(ih*v)/maxV; const c=mk("circle",{cx:x,cy:y,r:4.5,fill:wk.color,stroke:"#fff","stroke-width":2}); svg.appendChild(c); dots.push(c); rows.push({wk,v}); });
+    if(!rows.length){ clear(); return; }
+    rows.sort((a,b)=>b.v-a.v);
+    tip.innerHTML=`<div class=muted style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">${RH_DOW[i]}</div>`+
+      rows.map(r=>`<div class="tr"><span style="display:inline-flex;align-items:center;gap:6px"><span class="dot" style="background:${r.wk.color}"></span>${r.wk.short}</span><span style="font-weight:640">${fmt(r.v)}</span></div>`).join("");
+    tip.classList.add("on");
+    const tw=tip.offsetWidth,th=tip.offsetHeight; let left=e.clientX+16,top=e.clientY-th/2;
+    if(left+tw>window.innerWidth-8) left=e.clientX-tw-16; if(top<8)top=8; if(top+th>window.innerHeight-8)top=window.innerHeight-th-8;
+    tip.style.left=left+"px"; tip.style.top=top+"px";
+  });
+  svg.addEventListener("pointerleave",clear);
+}
+
+function renderRhythm(){
+  buildRhythmWeeks();
+  if(!rhythmWeeks.length) return;
+  document.getElementById("rhythmCard").style.display="block";
+  rhRenderStats(); rhRenderLegend(); rhRenderAll();
+}
+
 function renderEngagement(){
   const cs=(DATA.campaigns||[]).filter(c=>c.open_rate!=null && c.send_date);
   const card=document.getElementById("engageCard");
@@ -1362,6 +1531,7 @@ function render(data){
   renderCompState();
   renderStatic();
   renderEngagement();
+  renderRhythm();
   setTab("own");   // default tab
   makeCollapsible();
 }
@@ -1396,5 +1566,6 @@ fetch("/api/data")
   .then(render)
   .catch(e=>{ const s=document.getElementById("status"); s.className="err"; s.style.whiteSpace="pre-wrap"; s.textContent="Could not load data:\n\n"+e.message; });
 </script>
+<div id="rhythmTip"></div>
 </body>
 </html>
