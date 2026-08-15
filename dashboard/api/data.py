@@ -127,7 +127,7 @@ def fetch_payload(days=800):
         try:
             cur.execute("""
                 SELECT strain, offer, price, was_price, is_discounted,
-                       currency, captured_at::date AS week
+                       pack_size, bogo, currency, captured_at::date AS week
                 FROM special_offers
                 ORDER BY captured_at::date DESC, strain ASC
             """)
