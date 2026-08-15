@@ -70,7 +70,7 @@
     <h1>BARNEY'S FARM</h1>
     <p>Promo &amp; Sales Intelligence · Higher and Higher</p>
   </div>
-  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.2.0</span>
+  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.3.0</span>
 </header>
 
 <div class="wrap">
@@ -145,6 +145,11 @@
       <div class="grp" id="aggCtl">
         <button data-agg="day">Daily</button>
         <button data-agg="week" class="active">Weekly</button>
+      </div>
+      <span class="lbl" style="margin-left:10px">Compare:</span>
+      <div class="grp" id="yoyCtl">
+        <button data-yoy="off" class="active">Single</button>
+        <button data-yoy="on">Year-over-year</button>
       </div>
     </div>
     <canvas id="chart" height="120"></canvas>
@@ -237,6 +242,7 @@ let DATA = null;            // full payload
 let chart = null;
 let rangeMode = "2026";    // all | 2025 | 2026 | 180
 let aggMode = "week";      // day | week
+let yoyMode = "off";       // off | on  (year-over-year overlay)
 let perfScope = "major";   // major | all
 let perfYear = "all";      // all | 2024 | 2025 | 2026
 let perfRank = "all";      // all | top | bottom
@@ -311,6 +317,7 @@ function buildBands(){
 }
 
 function renderChart(){
+  if(yoyMode==="on"){ return renderChartYoY(); }
   const sales=filteredSales();
   const {labels, revenue}=seriesFor(sales);
   if(!labels.length) return;
@@ -377,6 +384,60 @@ function renderChart(){
 
   // legend list removed per request — bands + hover tooltips remain on the chart
   document.getElementById("promoLegend").innerHTML = "";
+}
+
+// ISO week number (1-53) for a YYYY-MM-DD string
+function isoWeekNum(day){
+  const d=new Date(day+"T00:00:00");
+  const dn=(d.getDay()+6)%7;               // Mon=0
+  d.setDate(d.getDate()-dn+3);             // nearest Thursday
+  const firstThu=new Date(d.getFullYear(),0,4);
+  const ft=(firstThu.getDay()+6)%7;
+  firstThu.setDate(firstThu.getDate()-ft+3);
+  return 1+Math.round((d-firstThu)/(7*24*3600*1000));
+}
+
+function renderChartYoY(){
+  // group revenue by year, then by week-of-year, so years align on a shared axis
+  const sales=DATA.sales||[];
+  const byYearWeek={};   // year -> {week -> revenue}
+  sales.forEach(s=>{
+    const day=dayOf(s.sale_date);
+    const yr=day.slice(0,4);
+    const wk=isoWeekNum(day);
+    (byYearWeek[yr] ??= {});
+    byYearWeek[yr][wk]=(byYearWeek[yr][wk]||0)+(s.revenue==null?0:Number(s.revenue));
+  });
+  const years=Object.keys(byYearWeek).sort();
+  if(!years.length) return;
+  const labels=[]; for(let w=1;w<=52;w++) labels.push("W"+w);
+  const yearColors={ "2024":"#9E9E9E", "2025":"#C89B3C", "2026":"#FF5E3A" };
+  const datasets=years.map((yr,i)=>{
+    const wk=byYearWeek[yr];
+    const data=[]; for(let w=1;w<=52;w++) data.push(wk[w]!=null?Math.round(wk[w]):null);
+    const color=yearColors[yr]|| ["#1B5E20","#5b3fa8","#2196F3"][i%3];
+    return { label:yr, data, borderColor:color, backgroundColor:color,
+             spanGaps:true, tension:.3, pointRadius:0, borderWidth:2,
+             borderDash: yr==="2026"?[]:(yr==="2025"?[6,3]:[2,3]) };
+  });
+
+  if(chart) chart.destroy();
+  chart=new Chart(document.getElementById("chart"),{
+    type:"line",
+    data:{labels,datasets},
+    options:{ responsive:true,
+      plugins:{ legend:{display:true,position:"top"},
+        tooltip:{mode:"index",intersect:false,callbacks:{
+          title:items=>"Week "+items[0].label.slice(1),
+          label:it=>it.dataset.label+": "+(it.raw!=null?"$"+it.raw.toLocaleString():"—")
+        }}},
+      interaction:{mode:"index",intersect:false},
+      scales:{ y:{ticks:{callback:v=>"$"+v.toLocaleString()}},
+               x:{ticks:{maxTicksLimit:16,autoSkip:true}} }
+    }
+  });
+  document.getElementById("promoLegend").innerHTML =
+    "<span class=muted style='font-size:12px'>Each line is a year, aligned by week number, so you can compare seasonal shape. 2026 solid, 2025 dashed, 2024 dotted.</span>";
 }
 
 function perfYearOf(p){
@@ -915,6 +976,16 @@ function wireControls(){
     aggMode=b.dataset.agg;
     document.querySelectorAll("#aggCtl button").forEach(x=>x.classList.remove("active"));
     b.classList.add("active"); renderChart();
+  });
+  document.querySelectorAll("#yoyCtl button").forEach(b=>b.onclick=()=>{
+    yoyMode=b.dataset.yoy;
+    document.querySelectorAll("#yoyCtl button").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active");
+    // grey out range/agg when in YoY mode (they don't apply)
+    const dim = yoyMode==="on";
+    document.getElementById("rangeCtl").style.opacity = dim?".4":"1";
+    document.getElementById("aggCtl").style.opacity = dim?".4":"1";
+    renderChart();
   });
   document.querySelectorAll("#perfScope button").forEach(b=>b.onclick=()=>{
     perfScope=b.dataset.scope;
