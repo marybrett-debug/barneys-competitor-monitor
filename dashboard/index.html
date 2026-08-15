@@ -70,7 +70,7 @@
     <h1>BARNEY'S FARM</h1>
     <p>Promo &amp; Sales Intelligence · Higher and Higher</p>
   </div>
-  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.5.0</span>
+  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.6.0</span>
 </header>
 
 <div class="wrap">
@@ -191,19 +191,50 @@
   </div>
 
   <div class="card" id="offersCard" style="display:none">
-    <h2>Special offers — weekly</h2>
-    <div class="controls">
-      <span class="lbl">Week:</span>
-      <select id="offerWeek" style="padding:6px 10px;border-radius:6px;border:1px solid var(--line);font-size:13px"></select>
-      <span id="offerSummary" class="lbl" style="margin-left:10px"></span>
+    <h2>Special offers</h2>
+    <div class="tabbar" id="offerTabs" style="margin-bottom:12px">
+      <button class="tab active" data-otab="week">This Week</button>
+      <button class="tab" data-otab="changes">Changes</button>
+      <button class="tab" data-otab="history">History</button>
     </div>
-    <table id="offersTable">
-      <thead><tr><th>Strain</th><th>Offer</th><th>Price</th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <div id="offerDiff" style="margin-top:14px"></div>
-    <div id="offerGridWrap" style="margin-top:18px;overflow-x:auto"></div>
-    <div class="legend">Scraped weekly (Wednesdays) from barneysfarm.com/us/special-offer-seeds. Pick a week to see its offers and what changed since the prior week; the grid below shows price history across recent weeks.</div>
+
+    <!-- THIS WEEK -->
+    <div id="otWeek">
+      <div class="controls" style="flex-wrap:wrap;gap:10px">
+        <span class="lbl">Week:</span>
+        <select id="offerWeek" style="padding:6px 10px;border-radius:6px;border:1px solid var(--line);font-size:13px"></select>
+        <span class="lbl" style="margin-left:6px">Show:</span>
+        <div class="grp" id="offerFilter">
+          <button data-of="all" class="active">All</button>
+          <button data-of="disc">Discounted</button>
+          <button data-of="bogo">BOGO</button>
+        </div>
+        <span class="lbl" style="margin-left:6px">Sort:</span>
+        <select id="offerSort" style="padding:5px 9px;border-radius:6px;border:1px solid var(--line);font-size:13px">
+          <option value="discount">Biggest discount</option>
+          <option value="price">Price</option>
+          <option value="name">Name</option>
+        </select>
+      </div>
+      <div id="offerKpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:0;margin:12px 0;border:1px solid var(--line);border-radius:8px;overflow:hidden"></div>
+      <table id="offersTable">
+        <thead><tr><th>Strain</th><th>Offer</th><th>Discount</th><th>Price</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <!-- CHANGES -->
+    <div id="otChanges" style="display:none">
+      <div id="offerDiff"></div>
+    </div>
+
+    <!-- HISTORY -->
+    <div id="otHistory" style="display:none">
+      <div id="offerHistoryNote" class="legend" style="margin-bottom:8px"></div>
+      <div id="offerGridWrap" style="overflow-x:auto"></div>
+    </div>
+
+    <div class="legend">Scraped weekly (Wednesdays) from barneysfarm.com/us/special-offer-seeds. <b>This Week</b> = current offers · <b>Changes</b> = what moved since last week · <b>History</b> = discounting patterns over time.</div>
   </div>
 
   </div><!-- /tabOwn -->
@@ -642,68 +673,91 @@ function priceCellHTML(o){
   return `${cur}${Number(o.price).toFixed(2)}`;
 }
 
+let offerFilter="all", offerSort="discount";
+let _offerWeeks=null, _offerByWeek=null;
+
+function discountPct(o){
+  if(o.is_discounted && o.was_price!=null && o.price!=null && Number(o.was_price)>0){
+    return Math.round((Number(o.was_price)-Number(o.price))/Number(o.was_price)*100);
+  }
+  return null;
+}
+
 function renderOffers(){
   const all=DATA.special_offers||[];
   if(!all.length) return;
   document.getElementById("offersCard").style.display="block";
 
-  // group by week (captured date)
   const byWeek={};
   all.forEach(o=>{ const w=dayOf(o.week||o.captured_at); (byWeek[w] ||= []).push(o); });
-  const weeks=Object.keys(byWeek).sort().reverse();   // newest first
+  const weeks=Object.keys(byWeek).sort().reverse();
+  _offerWeeks=weeks; _offerByWeek=byWeek;
 
-  // populate dropdown once
   const sel=document.getElementById("offerWeek");
   if(!sel.dataset.filled){
     sel.innerHTML=weeks.map(w=>`<option value="${w}">${w}</option>`).join("");
     sel.dataset.filled="1";
-    sel.onchange=()=>drawOfferWeek(sel.value, weeks, byWeek);
+    sel.onchange=()=>{ drawOfferWeek(sel.value); };
   }
-  drawOfferWeek(sel.value || weeks[0], weeks, byWeek);
-
-  // ---- price grid: strains (rows) x recent weeks (cols) ----
-  const recent=weeks.slice(0,8).reverse();   // up to 8 weeks, oldest->newest
-  const strains=[...new Set(all.map(o=>o.strain))].sort();
-  let gh=`<table style="font-size:12px"><thead><tr><th>Strain</th>`;
-  recent.forEach(w=> gh+=`<th>${w.slice(5)}</th>`);   // MM-DD
-  gh+=`</tr></thead><tbody>`;
-  // count how many weeks each strain appears, to sort sticky ones up
-  const freq={};
-  strains.forEach(s=> freq[s]=recent.filter(w=>byWeek[w].some(o=>o.strain===s)).length);
-  strains.sort((a,b)=> freq[b]-freq[a] || a.localeCompare(b));
-  strains.forEach(s=>{
-    gh+=`<tr><td><b>${s}</b> <span class=muted style="font-size:10px">${freq[s]}/${recent.length}</span></td>`;
-    recent.forEach(w=>{
-      const o=byWeek[w].find(x=>x.strain===s);
-      if(!o||o.price==null){ gh+=`<td class=muted>·</td>`; }
-      else {
-        const cur=o.currency||"$";
-        gh+=`<td>${cur}${Number(o.price).toFixed(2)}</td>`;
-      }
-    });
-    gh+=`</tr>`;
-  });
-  gh+=`</tbody></table>`;
-  document.getElementById("offerGridWrap").innerHTML=
-    `<div style="font-weight:600;font-size:13px;margin-bottom:6px">Discounted price by week <span class=muted style="font-weight:400">(sticky strains first; · = not on offer that week)</span></div>`+gh;
+  drawOfferWeek(sel.value || weeks[0]);
+  drawOfferHistory();
 }
 
-function drawOfferWeek(week, weeks, byWeek){
-  const offers=byWeek[week]||[];
+function drawOfferWeek(week){
+  const weeks=_offerWeeks, byWeek=_offerByWeek;
+  let offers=(byWeek[week]||[]).slice();
+
+  // ---- KPI strip ----
+  const disc=offers.filter(o=>o.is_discounted);
+  const bogo=offers.filter(o=>/bogo/i.test(o.offer||""));
+  const oos=offers.filter(o=>/out of stock/i.test((o.offer||"")+(o.stock||"")));
+  const pcts=offers.map(discountPct).filter(v=>v!=null);
+  const deepest=pcts.length?Math.max(...pcts):null;
+  // new vs prior week
+  const idx=weeks.indexOf(week);
+  const prevWeek = idx>=0 && idx<weeks.length-1 ? weeks[idx+1] : null;
+  const prevNames=new Set((prevWeek?byWeek[prevWeek]:[]).map(o=>o.strain));
+  const newCount=offers.filter(o=>!prevNames.has(o.strain)).length;
+  const cell=(lab,val,sub)=>`<div style="padding:12px 14px;border-right:1px solid var(--line)">
+      <div class=muted style="font-size:10px;text-transform:uppercase;letter-spacing:.5px">${lab}</div>
+      <div style="font-size:19px;font-weight:800;margin-top:3px">${val}</div>
+      <div class=muted style="font-size:10px">${sub||""}</div></div>`;
+  document.getElementById("offerKpis").innerHTML=
+    cell("On offer", offers.length, "this week")+
+    cell("Discounted", disc.length, bogo.length+" BOGO")+
+    cell("Deepest", deepest!=null?deepest+"% off":"—", "")+
+    cell("New this week", newCount, prevWeek?"vs "+prevWeek:"");
+
+  // ---- filter + sort ----
+  if(offerFilter==="disc") offers=offers.filter(o=>o.is_discounted);
+  else if(offerFilter==="bogo") offers=offers.filter(o=>/bogo/i.test(o.offer||""));
+  const sorters={
+    discount:(a,b)=>((discountPct(b)||-1)-(discountPct(a)||-1)),
+    price:(a,b)=>((a.price==null?1e9:a.price)-(b.price==null?1e9:b.price)),
+    name:(a,b)=>a.strain.localeCompare(b.strain),
+  };
+  offers.sort(sorters[offerSort]||sorters.discount);
+
   const otb=document.querySelector("#offersTable tbody");
   otb.innerHTML="";
-  offers.slice().sort((a,b)=>a.strain.localeCompare(b.strain)).forEach(o=>{
+  if(!offers.length){ otb.innerHTML="<tr><td colspan=5 class=muted>No offers match.</td></tr>"; return; }
+  offers.forEach(o=>{
     const offerCell=o.offer?`<span style="color:var(--green);font-weight:600">${o.offer}</span>`:`<span class=muted>—</span>`;
+    const pct=discountPct(o);
+    const pctCell=pct!=null?`<span style="color:#d9534f;font-weight:700">-${pct}%</span>`:`<span class=muted>—</span>`;
     otb.insertAdjacentHTML("beforeend",
-      `<tr><td><b>${o.strain}</b></td><td>${offerCell}</td><td>${priceCellHTML(o)}</td></tr>`);
+      `<tr><td><b>${o.strain}</b></td><td>${offerCell}</td><td>${pctCell}</td><td>${priceCellHTML(o)}</td></tr>`);
   });
-  const disc=offers.filter(o=>o.is_discounted).length;
-  document.getElementById("offerSummary").textContent=
-    `${offers.length} strains on offer · ${disc} discounted`;
 
-  // ---- diff vs the prior week ----
+  // ---- changes tab content ----
+  drawOfferChanges(week);
+}
+
+function drawOfferChanges(week){
+  const weeks=_offerWeeks, byWeek=_offerByWeek;
+  const offers=byWeek[week]||[];
   const idx=weeks.indexOf(week);
-  const prevWeek = idx>=0 && idx < weeks.length-1 ? weeks[idx+1] : null;
+  const prevWeek = idx>=0 && idx<weeks.length-1 ? weeks[idx+1] : null;
   const diffBox=document.getElementById("offerDiff");
   if(!prevWeek){ diffBox.innerHTML=`<div class=muted style="font-size:12px">No earlier week to compare.</div>`; return; }
   const prev=byWeek[prevWeek]||[];
@@ -718,20 +772,61 @@ function drawOfferWeek(week, weeks, byWeek){
       changed.push({strain:o.strain, from:Number(p.price), to:Number(o.price), cur:o.currency||"$"});
     }
   });
-  let h=`<div style="font-weight:600;font-size:13px;margin-bottom:6px">Changes vs ${prevWeek}</div>`;
+  let h=`<div style="font-weight:600;font-size:14px;margin-bottom:10px">${week} vs ${prevWeek}</div>`;
   if(!added.length && !dropped.length && !changed.length){
-    h+=`<div class=muted style="font-size:12px">No changes from the previous week.</div>`;
+    h+=`<div class=muted style="font-size:13px">No changes from the previous week.</div>`;
   } else {
-    h+=`<div style="font-size:12px;line-height:1.7">`;
-    added.forEach(o=> h+=`<div><span style="color:var(--green)">＋ Added:</span> ${o.strain} (${priceCellHTML(o)})</div>`);
-    dropped.forEach(o=> h+=`<div><span style="color:#d9534f">－ Dropped:</span> ${o.strain}</div>`);
-    changed.forEach(c=>{
-      const dir=c.to<c.from?"↓":"↑"; const col=c.to<c.from?"var(--green)":"#d9534f";
-      h+=`<div><span style="color:${col}">${dir} Price:</span> ${c.strain} ${c.cur}${c.from.toFixed(2)} → ${c.cur}${c.to.toFixed(2)}</div>`;
-    });
-    h+=`</div>`;
+    const sec=(title,color,items)=> items.length?`<div style="margin-bottom:12px"><div style="font-weight:600;font-size:12px;color:${color};margin-bottom:4px">${title} (${items.length})</div>${items.join("")}</div>`:"";
+    const addH=added.map(o=>`<div style="font-size:13px;padding:2px 0">${o.strain} <span class=muted>(${priceCellHTML(o)})</span></div>`);
+    const dropH=dropped.map(o=>`<div style="font-size:13px;padding:2px 0">${o.strain}</div>`);
+    const chgH=changed.map(c=>{const dir=c.to<c.from?"↓ deeper":"↑ higher";const col=c.to<c.from?"var(--green)":"#d9534f";
+      return `<div style="font-size:13px;padding:2px 0">${c.strain}: ${c.cur}${c.from.toFixed(2)} → ${c.cur}${c.to.toFixed(2)} <span style="color:${col}">${dir}</span></div>`;});
+    h+=sec("＋ Newly added","var(--green)",addH)+sec("－ Dropped off","#d9534f",dropH)+sec("△ Price changed","#C89B3C",chgH);
   }
   diffBox.innerHTML=h;
+}
+
+function drawOfferHistory(){
+  const all=DATA.special_offers||[];
+  const byWeek=_offerByWeek, weeks=_offerWeeks;
+  const recent=weeks.slice(0,10).reverse();
+  const strains=[...new Set(all.map(o=>o.strain))];
+  const freq={};
+  strains.forEach(s=> freq[s]=recent.filter(w=>byWeek[w].some(o=>o.strain===s)).length);
+  strains.sort((a,b)=> freq[b]-freq[a] || a.localeCompare(b));
+
+  // "perennially discounted" signal: on offer in most/all recent weeks
+  const perennial=strains.filter(s=>freq[s]>=Math.max(2,Math.round(recent.length*0.8)));
+  document.getElementById("offerHistoryNote").innerHTML =
+    `Discounted price by week (last ${recent.length} weeks). Strains on offer most weeks are shown first — `+
+    `<b>${perennial.length}</b> have been discounted in ${Math.round(recent.length*0.8)}+ of the last ${recent.length} weeks `+
+    `<span class=muted>(candidates to review: near-permanent discounts may signal slow sellers or mispriced items)</span>. `+
+    `<span class=muted>When per-strain sales data is available, a units-sold column can be added here.</span>`;
+
+  let gh=`<table style="font-size:12px"><thead><tr><th>Strain</th><th class=muted style="font-size:10px">weeks</th>`;
+  recent.forEach(w=> gh+=`<th>${w.slice(5)}</th>`);
+  gh+=`</tr></thead><tbody>`;
+  strains.forEach(s=>{
+    const isP=perennial.includes(s);
+    gh+=`<tr><td><b>${s}</b>${isP?' <span style="font-size:9px;background:#fde;color:#b03;padding:1px 4px;border-radius:3px">frequent</span>':''}</td>`+
+        `<td class=muted style="font-size:10px">${freq[s]}/${recent.length}</td>`;
+    recent.forEach(w=>{
+      const o=byWeek[w].find(x=>x.strain===s);
+      if(!o||o.price==null){ gh+=`<td class=muted>·</td>`; }
+      else { const cur=o.currency||"$"; const pct=discountPct(o);
+        gh+=`<td>${cur}${Number(o.price).toFixed(2)}${pct!=null?`<div style="font-size:9px;color:#d9534f">-${pct}%</div>`:''}</td>`; }
+    });
+    gh+=`</tr>`;
+  });
+  gh+=`</tbody></table>`;
+  document.getElementById("offerGridWrap").innerHTML=gh;
+}
+
+function setOfferTab(tab){
+  document.querySelectorAll("#offerTabs .tab").forEach(b=>b.classList.toggle("active", b.dataset.otab===tab));
+  document.getElementById("otWeek").style.display = tab==="week"?"block":"none";
+  document.getElementById("otChanges").style.display = tab==="changes"?"block":"none";
+  document.getElementById("otHistory").style.display = tab==="history"?"block":"none";
 }
 
 const COMP_FIELDS=[
@@ -1071,6 +1166,16 @@ function wireControls(){
     document.querySelectorAll("#monthlyDetail button").forEach(x=>x.classList.remove("active"));
     b.classList.add("active"); renderMonthly();
   });
+  document.querySelectorAll("#offerTabs .tab").forEach(b=>b.onclick=()=>setOfferTab(b.dataset.otab));
+  document.querySelectorAll("#offerFilter button").forEach(b=>b.onclick=()=>{
+    offerFilter=b.dataset.of;
+    document.querySelectorAll("#offerFilter button").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active");
+    const sel=document.getElementById("offerWeek"); drawOfferWeek(sel.value);
+  });
+  const osrt=document.getElementById("offerSort"); if(osrt) osrt.onchange=()=>{
+    offerSort=osrt.value; const sel=document.getElementById("offerWeek"); drawOfferWeek(sel.value);
+  };
 }
 
 function setTab(tab){
