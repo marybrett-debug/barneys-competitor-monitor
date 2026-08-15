@@ -435,6 +435,9 @@ def scrape_special_offers():
             return [], "error", f"special-offers fetch failed: {e}"
         browser.close()
 
+    import os as _os
+    _debug = _os.environ.get("SCRAPE_DEBUG") == "1"
+
     for c in cards:
         name = _clean(c.get("name", ""))
         block = c.get("block_text", "") or ""
@@ -449,29 +452,39 @@ def scrape_special_offers():
                 vals.append(float(n))
             except ValueError:
                 pass
-        # de-dup consecutive identical picks but keep order
         price = was = None
         is_disc = False
         if len(vals) >= 2:
-            # site shows "<original> <discounted>" e.g. 18.00 14.00
             was, price = vals[0], vals[1]
-            if price > was:              # safety: ensure discounted is the lower one
+            if price > was:
                 was, price = price, was
             is_disc = was > price
         elif len(vals) == 1:
             price = vals[0]
 
-        # BOGO / offer badge
-        offer = None
-        bogo = re.search(r"BOGO\s*\d+\+\d+", block, re.I)
-        if bogo:
-            offer = bogo.group(0).upper().replace("  ", " ")
+        # pack size: "Pack: 1", "Pack: 3", or "3 Pack" / "10-pack"
+        pack = None
+        pm = re.search(r"Pack:\s*(\d+)", block, re.I) or re.search(r"(\d+)\s*[-\s]?pack", block, re.I)
+        if pm:
+            try: pack = int(pm.group(1))
+            except ValueError: pack = None
+
+        # BOGO badge: "BOGO 10+10", "BOGO 5+5", "BOGO 3+3", or generic
+        bogo = re.search(r"BOGO\s*\d+\s*\+\s*\d+", block, re.I) or re.search(r"\bBOGO\b", block, re.I)
+        bogo_txt = bogo.group(0).upper().replace("  ", " ") if bogo else None
+
+        # OFFER = deal type (BOGO or Sale); DISCOUNT % handled separately in the dashboard
+        offer = bogo_txt
         if not offer and is_disc and was:
-            pct = round((was - price) / was * 100)
-            offer = f"{pct}% off"
+            offer = "Sale"
         offer = offer or _detect_offer(block)
 
         out_of_stock = "out of stock" in block.lower()
+
+        if _debug:
+            print(f"[debug] {name!r} | pack={pack} | bogo={bogo_txt} | "
+                  f"prices={vals} was={was} now={price} disc={is_disc} | "
+                  f"block={block[:120]!r}")
 
         offers.append({
             "strain": name,
@@ -479,6 +492,8 @@ def scrape_special_offers():
             "price": price,
             "was_price": was,
             "is_discounted": bool(is_disc),
+            "pack_size": pack,
+            "bogo": bogo_txt,
             "currency": "$",
             "source_url": SPECIAL_OFFERS_URL,
         })

@@ -361,14 +361,19 @@ def init_special_offers_schema():
                 id            SERIAL PRIMARY KEY,
                 captured_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
                 strain        TEXT NOT NULL,
-                offer         TEXT,            -- e.g. "Buy 1 Get 1 Free", "30% off"
+                offer         TEXT,            -- deal type, e.g. "BOGO 10+10", "Sale"
                 price         NUMERIC(10,2),   -- current/discounted price if shown
                 was_price     NUMERIC(10,2),   -- original price if a strikethrough shown
                 is_discounted BOOLEAN DEFAULT FALSE,
+                pack_size     INTEGER,         -- seeds per pack the price refers to
+                bogo          TEXT,            -- BOGO badge text if any, e.g. "BOGO 5+5"
                 currency      TEXT,
                 source_url    TEXT
             );
         """)
+        # safe migrations for existing tables
+        cur.execute("ALTER TABLE special_offers ADD COLUMN IF NOT EXISTS pack_size INTEGER;")
+        cur.execute("ALTER TABLE special_offers ADD COLUMN IF NOT EXISTS bogo TEXT;")
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_special_offers_time
             ON special_offers (captured_at DESC);
@@ -378,20 +383,20 @@ def init_special_offers_schema():
 
 def insert_special_offer(strain, offer=None, price=None, was_price=None,
                          is_discounted=False, currency=None, source_url=None,
-                         captured_at=None):
+                         captured_at=None, pack_size=None, bogo=None):
     with get_conn() as conn, conn.cursor() as cur:
         if captured_at:
             cur.execute("""
                 INSERT INTO special_offers
-                  (captured_at, strain, offer, price, was_price, is_discounted, currency, source_url)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-            """, (captured_at, strain, offer, price, was_price, is_discounted, currency, source_url))
+                  (captured_at, strain, offer, price, was_price, is_discounted, pack_size, bogo, currency, source_url)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (captured_at, strain, offer, price, was_price, is_discounted, pack_size, bogo, currency, source_url))
         else:
             cur.execute("""
                 INSERT INTO special_offers
-                  (strain, offer, price, was_price, is_discounted, currency, source_url)
-                VALUES (%s,%s,%s,%s,%s,%s,%s)
-            """, (strain, offer, price, was_price, is_discounted, currency, source_url))
+                  (strain, offer, price, was_price, is_discounted, pack_size, bogo, currency, source_url)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (strain, offer, price, was_price, is_discounted, pack_size, bogo, currency, source_url))
         conn.commit()
 
 
