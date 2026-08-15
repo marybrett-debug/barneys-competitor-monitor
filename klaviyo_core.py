@@ -48,6 +48,27 @@ def _int(v):
         return None
 
 
+def _pct(v):
+    """Convert a rate to a percentage in [0, 100], safely.
+    Supermetrics usually returns decimals (0.51 -> 51%). If a value already looks
+    like a percentage (>1), assume it's already a percent. Clamp to 100 so a bad
+    value can never overflow the NUMERIC(6,2) column (max 9999.99)."""
+    if v is None:
+        return None
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    if v <= 1.0:
+        v = v * 100.0          # decimal -> percent
+    # if it's already >1 we treat it as an existing percentage
+    if v < 0:
+        v = 0.0
+    if v > 100:
+        v = 100.0              # clamp; nothing over 100% and never overflows
+    return round(v, 2)
+
+
 def ensure_updates_table(cur):
     cur.execute("""
         CREATE TABLE IF NOT EXISTS data_updates (
@@ -223,10 +244,8 @@ def run_pull(source="manual", days=730):
             continue
         orate = _num(r[i_open]) if i_open is not None and i_open < len(r) else None
         crate = _num(r[i_click]) if i_click is not None and i_click < len(r) else None
-        if orate is not None:
-            orate = round(orate * 100, 2)
-        if crate is not None:
-            crate = round(crate * 100, 2)
+        orate = _pct(orate)
+        crate = _pct(crate)
         rec = _int(r[i_rec]) if i_rec is not None and i_rec < len(r) else None
         cur.execute("""
             INSERT INTO klaviyo_campaigns
