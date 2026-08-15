@@ -135,6 +135,15 @@ def fetch_payload(days=800):
         except Exception:
             special_offers = []
 
+        # last-updated stamps (klaviyo, sales, etc.)
+        try:
+            cur.execute("SELECT kind, updated_at, source, detail FROM data_updates")
+            data_updates = {r["kind"]: {"updated_at": str(r["updated_at"]),
+                                        "source": r["source"], "detail": r["detail"]}
+                            for r in cur.fetchall()}
+        except Exception:
+            data_updates = {}
+
     # ---- promo performance: avg daily revenue during vs baseline around it ----
     performance = _compute_performance(sales, promos)
     _attach_engagement(performance, campaigns)
@@ -152,6 +161,7 @@ def fetch_payload(days=800):
             "promos": promos, "performance": performance,
             "monthly": monthly, "campaigns": campaigns,
             "special_offers": special_offers,
+            "data_updates": data_updates,
             "competitor_state": competitor_state,
             "competitor_weeks": competitor_weeks}
 

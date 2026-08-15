@@ -45,14 +45,19 @@ def _num(s):
 
 
 def _find_col(low_headers, candidates):
-    """Match a header exactly, by startswith, or contains (so 'net total (excl. tax)' matches 'net total')."""
+    """Return the index of the first header matching a candidate term.
+    Matches exact, startswith, or contains — so 'net total (excl. tax)'
+    matches the candidate 'net total'. Prefers the earliest, most exact match."""
+    # exact first
     for cand in candidates:
         if cand in low_headers:
             return low_headers.index(cand)
+    # then startswith
     for cand in candidates:
         for i, h in enumerate(low_headers):
             if h.startswith(cand):
                 return i
+    # then contains
     for cand in candidates:
         for i, h in enumerate(low_headers):
             if cand in h:
@@ -73,16 +78,20 @@ def _rows_from_csv(text):
     delim = ";" if header.count(";") >= header.count(",") else ","
     reader = csv.DictReader(lines, delimiter=delim)
     reader.fieldnames = [(h or "").strip() for h in (reader.fieldnames or [])]
-    fields = {f.lower(): f for f in reader.fieldnames}
-    # map columns flexibly
-    lowh = [f.lower() for f in reader.fieldnames]
-    _di = _find_col(lowh, ("date",)); _ri = _find_col(lowh, ("net total","revenue","net")); _oi = _find_col(lowh, ("sales","orders"))
-    date_col = reader.fieldnames[_di] if _di is not None else None
-    rev_col = reader.fieldnames[_ri] if _ri is not None else None
-    ord_col = reader.fieldnames[_oi] if _oi is not None else None
+    low_headers = [f.lower() for f in reader.fieldnames]
+    # map columns flexibly (handles 'Net Total (excl. Tax)' etc.)
+    di = _find_col(low_headers, ("date",))
+    ri = _find_col(low_headers, ("net total", "revenue", "net"))
+    oi = _find_col(low_headers, ("sales", "orders"))
+    date_col = reader.fieldnames[di] if di is not None else None
+    rev_col = reader.fieldnames[ri] if ri is not None else None
+    ord_col = reader.fieldnames[oi] if oi is not None else None
     for row in reader:
         row = {(k or "").strip(): v for k, v in row.items()}
-        d = _parse_date(row.get(date_col, "")) if date_col else None
+        raw_date = (row.get(date_col, "") or "").strip() if date_col else ""
+        if raw_date.lower() in ("totals", "total", ""):
+            continue
+        d = _parse_date(raw_date) if date_col else None
         if not d:
             continue
         rev = _num(row.get(rev_col, "")) if rev_col else None
@@ -97,6 +106,7 @@ def _rows_from_xlsx(data):
     ws = wb.active
     rows = ws.iter_rows(values_only=True)
     header = None
+    idx_date = idx_rev = idx_ord = None
     for r in rows:
         if r is None:
             continue
@@ -109,7 +119,11 @@ def _rows_from_xlsx(data):
                 idx_rev = _find_col(low, ("net total", "revenue", "net"))
                 idx_ord = _find_col(low, ("sales", "orders"))
             continue
-        if idx_date >= len(r):
+        if idx_date is None or idx_date >= len(r):
+            continue
+        # skip summary/total rows
+        first = str(r[idx_date]).strip().lower() if r[idx_date] is not None else ""
+        if first in ("totals", "total", ""):
             continue
         d = _parse_date(str(r[idx_date])) if r[idx_date] is not None else None
         if not d:
@@ -193,6 +207,12 @@ class handler(BaseHTTPRequestHandler):
             if not rows:
                 return self._send(400, {"error": "No valid sales rows found. Expected a Date column and a Net Total/Revenue column."})
 
+            # safety guard: if NONE of the rows have revenue, the revenue column
+            # almost certainly didn't match — refuse rather than wipe existing data
+            rows_with_rev = [r for r in rows if r[1] is not None]
+            if not rows_with_rev:
+                return self._send(400, {"error": "Found dates but no revenue values — the revenue column wasn't recognized (expected something like 'Net Total'). Nothing was changed."})
+
             conn = _get_conn()
             cur = conn.cursor()
             n = 0
@@ -207,6 +227,22 @@ class handler(BaseHTTPRequestHandler):
                 """, (d.isoformat(), rev, orders))
                 n += 1
             conn.commit()
+            # record the import timestamp
+            try:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS data_updates (
+                      kind TEXT PRIMARY KEY, updated_at TIMESTAMPTZ NOT NULL,
+                      source TEXT, detail TEXT)
+                """)
+                cur.execute("""
+                    INSERT INTO data_updates (kind, updated_at, source, detail)
+                    VALUES ('sales', now(), 'import', %s)
+                    ON CONFLICT (kind) DO UPDATE SET
+                      updated_at=now(), source='import', detail=EXCLUDED.detail
+                """, (f"{n} days imported",))
+                conn.commit()
+            except Exception:
+                conn.rollback()
             cur.close()
             conn.close()
 

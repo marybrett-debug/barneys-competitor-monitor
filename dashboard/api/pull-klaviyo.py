@@ -286,6 +286,23 @@ class handler(BaseHTTPRequestHandler):
             # ---- derive promo windows from campaigns, insert only NEW ones ----
             promos_added = _derive_and_insert_promos(cur, conn, collected)
 
+            # ---- record this update as 'manual' (button click) ----
+            try:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS data_updates (
+                      kind TEXT PRIMARY KEY, updated_at TIMESTAMPTZ NOT NULL,
+                      source TEXT, detail TEXT)
+                """)
+                cur.execute("""
+                    INSERT INTO data_updates (kind, updated_at, source, detail)
+                    VALUES ('klaviyo', now(), 'manual', %s)
+                    ON CONFLICT (kind) DO UPDATE SET
+                      updated_at=now(), source='manual', detail=EXCLUDED.detail
+                """, (f"{n} US campaigns, {promos_added} promos derived",))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+
             cur.close(); conn.close()
 
             if not seen_dates:
