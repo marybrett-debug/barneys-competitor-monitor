@@ -378,12 +378,14 @@ def _detect_offer(text):
 
 def scrape_special_offers():
     """Scrape the Barney's Farm US special-offers page and extract, per product:
-    strain name, the offer/discount badge, and prices.
+    strain name, the offer/discount badge (BOGO etc.), and prices.
 
-    Page structure (Bagisto theme): each product is a `.product_block` containing
-    `.product_name` (strain), a badge like "Save 50% Special Offer", `.product_thc`,
-    and `.product_price` with text like "2 Prices From $15.00 $42.00" where the
-    first price is the discounted price and the second is the original.
+    NEW SITE (2026 migration): the page is a JS-rendered React/Next-style catalog.
+    Each product is a card containing a link to /us/<slug>-strain-<id>, the strain
+    name as the link text, a price area with one number (no discount) or two numbers
+    (original then discounted, e.g. "18.00 14.00"), an optional BOGO badge
+    ("BOGO 10+10"), and an optional "Out of stock" label. We anchor on the product
+    links and walk up to the enclosing card so we don't depend on fragile class names.
     """
     offers = []
     with sync_playwright() as p:
@@ -394,24 +396,36 @@ def scrape_special_offers():
                         "Chrome/124.0 Safari/537.36"))
         try:
             page.goto(SPECIAL_OFFERS_URL, wait_until="networkidle", timeout=60000)
-            page.wait_for_timeout(3000)
-            # Pull each product block's named parts directly.
-            cards = page.evaluate("""
+            page.wait_for_timeout(3500)
+            # scroll to force lazy-loaded cards to render
+            for _ in range(6):
+                page.mouse.wheel(0, 4000)
+                page.wait_for_timeout(600)
+            page.wait_for_timeout(1000)
+            cards = page.evaluate(r"""
                 () => {
                   const out = [];
-                  document.querySelectorAll('.product_block').forEach(el => {
-                    const q = (sel) => {
-                      const n = el.querySelector(sel);
-                      return n ? (n.innerText || '').trim() : '';
-                    };
-                    const name = q('.product_name');
-                    const price = q('.product_price');
-                    if (!name || !price) return;
-                    // the badge is usually the first short line of the block
-                    const firstLine = (el.innerText || '').split(String.fromCharCode(10))
-                                        .map(s => s.trim()).filter(Boolean)[0] || '';
-                    out.push({name: name, price_text: price, badge: firstLine,
-                              thc: q('.product_thc')});
+                  const seen = new Set();
+                  // product links look like /us/<slug>-strain-<id>
+                  const links = Array.from(document.querySelectorAll('a[href*="-strain-"]'));
+                  links.forEach(a => {
+                    const href = a.getAttribute('href') || '';
+                    const m = href.match(/-strain-(\d+)/);
+                    if (!m) return;
+                    const id = m[1];
+                    const name = (a.innerText || '').trim();
+                    if (!name) return;            // skip image-only <a> (same card has a text <a>)
+                    if (seen.has(id)) return;
+                    seen.add(id);
+                    // walk up to a card container that holds the price text
+                    let card = a;
+                    for (let i = 0; i < 6 && card && card.parentElement; i++) {
+                      card = card.parentElement;
+                      const t = card.innerText || '';
+                      if (/\d+\.\d{2}/.test(t)) break;   // found the price area
+                    }
+                    const text = (card ? card.innerText : a.innerText) || '';
+                    out.push({ id, name, block_text: text, href });
                   });
                   return out;
                 }
@@ -423,39 +437,41 @@ def scrape_special_offers():
 
     for c in cards:
         name = _clean(c.get("name", ""))
-        price_text = c.get("price_text", "")
-        badge = c.get("badge", "")
+        block = c.get("block_text", "") or ""
         if not name:
             continue
 
-        # parse all $-prices in the price line; first = discounted, second = original
-        nums = re.findall(r"[€£$]\s*(\d{1,4}(?:[.,]\d{2})?)", price_text)
+        # prices: all NN.NN numbers in the card. Two => original then discounted.
+        nums = re.findall(r"(\d{1,4}\.\d{2})", block)
         vals = []
         for n in nums:
             try:
-                vals.append(float(n.replace(",", ".")))
+                vals.append(float(n))
             except ValueError:
                 pass
-        cur_sym = "$"
-        sym_m = re.search(r"[€£$]", price_text)
-        if sym_m:
-            cur_sym = sym_m.group(0)
-
+        # de-dup consecutive identical picks but keep order
         price = was = None
         is_disc = False
         if len(vals) >= 2:
-            # "From $15.00 $42.00" -> discounted 15, original 42
-            price = min(vals)
-            was = max(vals)
+            # site shows "<original> <discounted>" e.g. 18.00 14.00
+            was, price = vals[0], vals[1]
+            if price > was:              # safety: ensure discounted is the lower one
+                was, price = price, was
             is_disc = was > price
         elif len(vals) == 1:
             price = vals[0]
 
-        # offer: prefer the badge ("Save 50% Special Offer"), else detect from text
+        # BOGO / offer badge
         offer = None
-        if badge and badge.lower() != name.lower():
-            offer = _clean(badge)
-        offer = offer or _detect_offer(price_text) or _detect_offer(badge)
+        bogo = re.search(r"BOGO\s*\d+\+\d+", block, re.I)
+        if bogo:
+            offer = bogo.group(0).upper().replace("  ", " ")
+        if not offer and is_disc and was:
+            pct = round((was - price) / was * 100)
+            offer = f"{pct}% off"
+        offer = offer or _detect_offer(block)
+
+        out_of_stock = "out of stock" in block.lower()
 
         offers.append({
             "strain": name,
@@ -463,7 +479,7 @@ def scrape_special_offers():
             "price": price,
             "was_price": was,
             "is_discounted": bool(is_disc),
-            "currency": cur_sym,
+            "currency": "$",
             "source_url": SPECIAL_OFFERS_URL,
         })
 
