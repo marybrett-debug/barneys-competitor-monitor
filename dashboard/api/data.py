@@ -123,7 +123,9 @@ def fetch_payload(days=800):
         except Exception:
             campaigns = []
 
-        # all special offers across weeks — grouped by capture day on the client
+        # all special offers across weeks — grouped by capture day on the client.
+        # pack_size/bogo are newer columns; fall back if they don't exist yet.
+        special_offers = []
         try:
             cur.execute("""
                 SELECT strain, offer, price, was_price, is_discounted,
@@ -133,7 +135,18 @@ def fetch_payload(days=800):
             """)
             special_offers = _serialize(cur.fetchall())
         except Exception:
-            special_offers = []
+            conn.rollback()   # clear the aborted transaction before retrying
+            try:
+                cur.execute("""
+                    SELECT strain, offer, price, was_price, is_discounted,
+                           currency, captured_at::date AS week
+                    FROM special_offers
+                    ORDER BY captured_at::date DESC, strain ASC
+                """)
+                special_offers = _serialize(cur.fetchall())
+            except Exception:
+                conn.rollback()
+                special_offers = []
 
         # last-updated stamps (klaviyo, sales, etc.)
         try:
@@ -142,6 +155,7 @@ def fetch_payload(days=800):
                                         "source": r["source"], "detail": r["detail"]}
                             for r in cur.fetchall()}
         except Exception:
+            conn.rollback()
             data_updates = {}
 
     # ---- promo performance: avg daily revenue during vs baseline around it ----
