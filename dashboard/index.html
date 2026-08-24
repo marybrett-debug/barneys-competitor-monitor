@@ -84,7 +84,7 @@
     <h1>BARNEY'S FARM</h1>
     <p>Promo &amp; Sales Intelligence · Higher and Higher</p>
   </div>
-  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.9.3</span>
+  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.10.0</span>
 </header>
 
 <div class="wrap">
@@ -234,6 +234,7 @@
       <button class="tab active" data-otab="week">This Week</button>
       <button class="tab" data-otab="changes">Changes</button>
       <button class="tab" data-otab="history">History</button>
+      <button class="tab" data-otab="bogo">BOGO Lists</button>
     </div>
 
     <!-- THIS WEEK -->
@@ -272,7 +273,42 @@
       <div id="offerGridWrap" style="overflow-x:auto"></div>
     </div>
 
-    <div class="legend"><b>Auto-updates twice a week:</b> Wednesday ~1am PT (end of the current offer cycle) and Saturday ~1am PT (fresh offers after the Thursday/Friday refresh), scraped from barneysfarm.com/us/special-offer-seeds. Each run adds a dated snapshot. <b>This Week</b> = current offers · <b>Changes</b> = what moved since the previous snapshot · <b>History</b> = discounting patterns over time.</div>
+    <div id="otBogo" style="display:none">
+      <details style="margin-bottom:16px;border:1px solid var(--line);border-radius:8px;padding:10px 14px">
+        <summary style="cursor:pointer;font-weight:600;font-size:13.5px">➕ Paste a weekly BOGO list</summary>
+        <div style="margin-top:12px">
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+            <label style="font-size:12px">Week label<br><input id="bogoWeekLabel" placeholder="Week 8" style="padding:6px 9px;border:1px solid var(--line);border-radius:6px;font-size:13px;width:120px"></label>
+            <label style="font-size:12px">Week date (optional)<br><input id="bogoWeekDate" type="date" style="padding:6px 9px;border:1px solid var(--line);border-radius:6px;font-size:13px"></label>
+          </div>
+          <textarea id="bogoText" rows="8" placeholder="Paste your list here, e.g.&#10;Acapulco Gold - 5+10&#10;Blue Cheese 3+5&#10;MAC Precision F1 3+5+10" style="width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;font-family:ui-monospace,monospace"></textarea>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+            <button id="bogoSaveBtn" class="rhythm-btn" style="background:var(--green);color:#fff;border-color:var(--green)">Save list</button>
+            <span id="bogoSaveStatus" style="font-size:12px;color:var(--muted)"></span>
+          </div>
+          <div class="legend" style="margin-top:8px">Each number is a pack size offered as buy-one-get-one: <b>3</b>→3+3, <b>5</b>→5+5, <b>10</b>→10+10. So "5+10" = a 5+5 and a 10+10 BOGO. Re-pasting a week label replaces that week.</div>
+        </div>
+      </details>
+
+      <div class="controls" style="flex-wrap:wrap;gap:10px">
+        <span class="lbl">Week:</span>
+        <select id="bogoWeekFilter" style="padding:5px 9px;border-radius:6px;border:1px solid var(--line);font-size:13px"></select>
+        <span class="lbl" style="margin-left:6px">Show:</span>
+        <div class="grp" id="bogoTierFilter">
+          <button data-bt="all" class="active">All</button>
+          <button data-bt="multi">Multi-tier</button>
+        </div>
+        <span style="flex:1"></span>
+        <button id="bogoExportBtn" class="rhythm-btn">⬇ Export CSV</button>
+      </div>
+      <div id="bogoKpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:0;margin:12px 0;border:1px solid var(--line);border-radius:8px;overflow:hidden"></div>
+      <table id="bogoTable">
+        <thead><tr><th>Strain</th><th>BOGO offers</th><th>On offer page?</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="legend"><b>Auto-updates twice a week:</b> Wednesday ~1am PT (end of the current offer cycle) and Saturday ~1am PT (fresh offers after the Thursday/Friday refresh), scraped from barneysfarm.com/us/special-offer-seeds. Each run adds a dated snapshot. <b>This Week</b> = current offers · <b>Changes</b> = what moved since the previous snapshot · <b>History</b> = discounting patterns over time · <b>BOGO Lists</b> = your pasted weekly BOGO data (multiple pack tiers per strain).</div>
   </div>
 
   </div><!-- /tabOwn -->
@@ -812,7 +848,9 @@ function drawOfferWeek(week){
     const pct=discountPct(o);
     const pctCell=pct!=null?`<span style="color:#d9534f;font-weight:700">-${pct}%</span>`:`<span class=muted>—</span>`;
     const packCell=o.pack_size!=null?`<span class=muted>${o.pack_size}-pack</span>`:`<span class=muted>—</span>`;
-    const bogoCell=o.bogo?`<span style="color:var(--green);font-weight:600">${o.bogo}</span>`:`<span class=muted>—</span>`;
+    const listBogo=bogoForStrain(o.strain);
+    const bogoDisplay = listBogo || o.bogo;
+    const bogoCell=bogoDisplay?`<span style="color:var(--green);font-weight:600">${bogoDisplay}</span>`:`<span class=muted>—</span>`;
     otb.insertAdjacentHTML("beforeend",
       `<tr><td><b>${o.strain}</b></td><td>${packCell}</td><td>${bogoCell}</td><td>${pctCell}</td><td>${priceCellHTML(o)}</td></tr>`);
   });
@@ -895,6 +933,109 @@ function setOfferTab(tab){
   document.getElementById("otWeek").style.display = tab==="week"?"block":"none";
   document.getElementById("otChanges").style.display = tab==="changes"?"block":"none";
   document.getElementById("otHistory").style.display = tab==="history"?"block":"none";
+  document.getElementById("otBogo").style.display = tab==="bogo"?"block":"none";
+  if(tab==="bogo") renderBogo();
+}
+
+let bogoTierFilter="all";
+function bogoForStrain(strain){
+  // return the BOGO tiers string for a strain from the MOST RECENT pasted list
+  const lists=DATA.bogo_lists||[];
+  if(!lists.length||!strain) return null;
+  const byWeek=bogoWeeks(); const weeks=Object.keys(byWeek);
+  if(!weeks.length) return null;
+  weeks.sort((a,b)=>{ const da=byWeek[a].date||"",db=byWeek[b].date||""; return da!==db?db.localeCompare(da):b.localeCompare(a); });
+  const latest=byWeek[weeks[0]].rows;
+  const hit=latest.find(r=>r.strain.toLowerCase()===strain.toLowerCase());
+  return hit?hit.bogos:null;
+}
+function bogoWeeks(){
+  const lists=DATA.bogo_lists||[];
+  const byWeek={};
+  lists.forEach(r=>{ (byWeek[r.week_label] ||= {date:r.week_date, rows:[]}).rows.push(r); });
+  return byWeek;
+}
+function renderBogo(){
+  const byWeek=bogoWeeks();
+  const weeks=Object.keys(byWeek);
+  const sel=document.getElementById("bogoWeekFilter");
+  if(!weeks.length){
+    sel.innerHTML="<option>No lists yet</option>";
+    document.querySelector("#bogoTable tbody").innerHTML="<tr><td colspan=3 class=muted>Paste a weekly BOGO list above to get started.</td></tr>";
+    document.getElementById("bogoKpis").innerHTML="";
+    return;
+  }
+  // sort weeks by date desc then label desc
+  weeks.sort((a,b)=>{
+    const da=byWeek[a].date||"", db=byWeek[b].date||"";
+    if(da!==db) return db.localeCompare(da);
+    return b.localeCompare(a);
+  });
+  const cur=sel.value && byWeek[sel.value] ? sel.value : weeks[0];
+  sel.innerHTML=weeks.map(w=>`<option value="${w}"${w===cur?" selected":""}>${w}${byWeek[w].date?" · "+byWeek[w].date:""}</option>`).join("");
+  drawBogoWeek(cur);
+}
+function drawBogoWeek(week){
+  const byWeek=bogoWeeks(); const info=byWeek[week]; if(!info) return;
+  let rows=info.rows.slice().sort((a,b)=>a.strain.localeCompare(b.strain));
+  // strains on the current scraped offer page (to show "on offer page?")
+  const scrapedStrains=new Set((DATA.special_offers||[]).map(o=>(o.strain||"").toLowerCase()));
+  // KPIs
+  const total=rows.length;
+  const multi=rows.filter(r=>(r.packs||"").includes(",")).length;
+  const onPage=rows.filter(r=>scrapedStrains.has(r.strain.toLowerCase())).length;
+  const cell=(lab,val,sub)=>`<div style="padding:12px 14px;border-right:1px solid var(--line)">
+      <div class=muted style="font-size:10px;text-transform:uppercase;letter-spacing:.5px">${lab}</div>
+      <div style="font-size:19px;font-weight:800;margin-top:3px">${val}</div>
+      <div class=muted style="font-size:10px">${sub||""}</div></div>`;
+  document.getElementById("bogoKpis").innerHTML=
+    cell("Strains w/ BOGO", total, week)+
+    cell("Multi-tier", multi, "2+ pack options")+
+    cell("On offer page now", onPage, "matched to scrape");
+  // filter
+  if(bogoTierFilter==="multi") rows=rows.filter(r=>(r.packs||"").includes(","));
+  const tb=document.querySelector("#bogoTable tbody"); tb.innerHTML="";
+  if(!rows.length){ tb.innerHTML="<tr><td colspan=3 class=muted>No entries match.</td></tr>"; return; }
+  rows.forEach(r=>{
+    const onPg=scrapedStrains.has(r.strain.toLowerCase());
+    const tiers=(r.bogos||"").split(",").map(s=>`<span style="display:inline-block;background:var(--surface,#f3f5f0);border:1px solid var(--line);border-radius:4px;padding:1px 7px;margin:1px 3px 1px 0;font-size:12px;color:var(--green);font-weight:600">${s.trim()}</span>`).join("");
+    tb.insertAdjacentHTML("beforeend",
+      `<tr><td><b>${r.strain}</b></td><td>${tiers}</td><td>${onPg?'<span style="color:var(--green)">✓ yes</span>':'<span class=muted>—</span>'}</td></tr>`);
+  });
+}
+function exportBogoCSV(){
+  const sel=document.getElementById("bogoWeekFilter"); const week=sel.value;
+  const byWeek=bogoWeeks(); const info=byWeek[week]; if(!info) return;
+  const scrapedStrains=new Set((DATA.special_offers||[]).map(o=>(o.strain||"").toLowerCase()));
+  const hdr=["Week","Date","Strain","Pack sizes","BOGO offers","On offer page"];
+  const lines=[hdr.join(",")];
+  info.rows.forEach(r=>{
+    const onPg=scrapedStrains.has(r.strain.toLowerCase())?"yes":"no";
+    const cells=[week, info.date||"", r.strain, (r.packs||"").replace(/,/g,";"), (r.bogos||"").replace(/,/g,";"), onPg]
+      .map(c=>/[",]/.test(c)?'"'+c.replace(/"/g,'""')+'"':c);
+    lines.push(cells.join(","));
+  });
+  const blob=new Blob([lines.join("\n")],{type:"text/csv"});
+  const url=URL.createObjectURL(blob); const a=document.createElement("a");
+  a.href=url; a.download=`bogo_${week.replace(/\s+/g,"_")}.csv`; a.click();
+  URL.revokeObjectURL(url);
+}
+async function saveBogo(){
+  const label=document.getElementById("bogoWeekLabel").value.trim();
+  const date=document.getElementById("bogoWeekDate").value;
+  const text=document.getElementById("bogoText").value;
+  const status=document.getElementById("bogoSaveStatus");
+  if(!label){ status.textContent="Enter a week label first."; return; }
+  if(!text.trim()){ status.textContent="Paste your BOGO list first."; return; }
+  status.textContent="Saving…";
+  try{
+    const res=await fetch("/api/save-bogo",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({week_label:label, week_date:date||null, text})});
+    const j=await res.json();
+    if(j.ok){ status.textContent=`✓ Saved ${j.saved} strains (${j.multi_tier} multi-tier). Refresh to see them.`;
+      status.style.color="var(--green)"; }
+    else { status.textContent="Error: "+(j.error||"could not save"); status.style.color="#d9534f"; }
+  }catch(e){ status.textContent="Error: "+e.message; status.style.color="#d9534f"; }
 }
 
 const COMP_FIELDS=[
@@ -1244,6 +1385,15 @@ function wireControls(){
   const osrt=document.getElementById("offerSort"); if(osrt) osrt.onchange=()=>{
     offerSort=osrt.value; const sel=document.getElementById("offerWeek"); drawOfferWeek(sel.value);
   };
+  const bSave=document.getElementById("bogoSaveBtn"); if(bSave) bSave.onclick=saveBogo;
+  const bExport=document.getElementById("bogoExportBtn"); if(bExport) bExport.onclick=exportBogoCSV;
+  const bWeek=document.getElementById("bogoWeekFilter"); if(bWeek) bWeek.onchange=()=>drawBogoWeek(bWeek.value);
+  document.querySelectorAll("#bogoTierFilter button").forEach(b=>b.onclick=()=>{
+    bogoTierFilter=b.dataset.bt;
+    document.querySelectorAll("#bogoTierFilter button").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active");
+    const sel=document.getElementById("bogoWeekFilter"); drawBogoWeek(sel.value);
+  });
   const rAll=document.getElementById("rhythmAll"); if(rAll) rAll.onclick=()=>{ rhythmHidden.clear(); rhRenderLegend(); rhRenderAll(); };
   const rLatest=document.getElementById("rhythmLatest"); if(rLatest) rLatest.onclick=()=>{
     rhythmHidden.clear(); rhythmWeeks.forEach(w=>{ if(!w.isLast) rhythmHidden.add(w.id); }); rhRenderLegend(); rhRenderAll();
