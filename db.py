@@ -422,3 +422,39 @@ def clear_special_offers_today():
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("DELETE FROM special_offers WHERE captured_at::date = now()::date")
         conn.commit()
+
+
+def init_bogo_schema():
+    """Table for manually-provided weekly BOGO lists (richer than the scrape:
+    captures multiple pack-size BOGOs per strain). One row per strain per list."""
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS bogo_lists (
+                id          SERIAL PRIMARY KEY,
+                week_label  TEXT NOT NULL,       -- e.g. "Week 8"
+                week_date   DATE,                -- optional date the list applies to
+                strain      TEXT NOT NULL,
+                packs       TEXT,                -- comma list of pack sizes, e.g. "5,10"
+                bogos       TEXT,                -- human form, e.g. "5+5, 10+10"
+                created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_bogo_week ON bogo_lists (week_label);
+        """)
+        conn.commit()
+
+
+def replace_bogo_list(week_label, week_date, rows):
+    """Replace the BOGO list for a given week_label with `rows`
+    (list of dicts: strain, packs, bogos). Re-pasting a week overwrites it."""
+    init_bogo_schema()
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM bogo_lists WHERE week_label = %s", (week_label,))
+        for r in rows:
+            cur.execute("""
+                INSERT INTO bogo_lists (week_label, week_date, strain, packs, bogos)
+                VALUES (%s,%s,%s,%s,%s)
+            """, (week_label, week_date, r["strain"], r.get("packs"), r.get("bogos")))
+        conn.commit()
+        return len(rows)
