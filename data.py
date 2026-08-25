@@ -9,7 +9,7 @@ Read-only: this endpoint never writes.
 """
 import os
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, date, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
 
 import psycopg2
@@ -111,6 +111,26 @@ def fetch_payload(days=800):
         except Exception:
             promos = []
 
+        # Recompute MAJOR promo end dates at read time: each major sale runs until
+        # the day before the next major sale starts; the newest runs through today.
+        # (Stored end dates from older derivations used a fixed "+3 days" tail that
+        # cut ongoing sales short — this keeps the current sale active without
+        # rewriting stored data.)
+        try:
+            today_str = datetime.now(timezone.utc).date().isoformat()
+            majors = [p for p in promos if p.get("is_major") and p.get("start_date")]
+            majors.sort(key=lambda p: str(p["start_date"]))
+            for i, p in enumerate(majors):
+                if i + 1 < len(majors):
+                    nxt = date.fromisoformat(str(majors[i + 1]["start_date"])[:10])
+                    p["end_date"] = (nxt - timedelta(days=1)).isoformat()
+                else:
+                    cur_end = str(p.get("end_date") or "")[:10]
+                    if not cur_end or cur_end < today_str:
+                        p["end_date"] = today_str
+        except Exception:
+            pass
+
         # Klaviyo email campaigns
         try:
             cur.execute("""
@@ -123,17 +143,52 @@ def fetch_payload(days=800):
         except Exception:
             campaigns = []
 
-        # all special offers across weeks — grouped by capture day on the client
+        # all special offers across weeks — grouped by capture day on the client.
+        # pack_size/bogo are newer columns; fall back if they don't exist yet.
+        special_offers = []
         try:
             cur.execute("""
                 SELECT strain, offer, price, was_price, is_discounted,
-                       currency, captured_at::date AS week
+                       pack_size, bogo, currency, captured_at::date AS week
                 FROM special_offers
                 ORDER BY captured_at::date DESC, strain ASC
             """)
             special_offers = _serialize(cur.fetchall())
         except Exception:
-            special_offers = []
+            conn.rollback()   # clear the aborted transaction before retrying
+            try:
+                cur.execute("""
+                    SELECT strain, offer, price, was_price, is_discounted,
+                           currency, captured_at::date AS week
+                    FROM special_offers
+                    ORDER BY captured_at::date DESC, strain ASC
+                """)
+                special_offers = _serialize(cur.fetchall())
+            except Exception:
+                conn.rollback()
+                special_offers = []
+
+        # last-updated stamps (klaviyo, sales, etc.)
+        try:
+            cur.execute("SELECT kind, updated_at, source, detail FROM data_updates")
+            data_updates = {r["kind"]: {"updated_at": str(r["updated_at"]),
+                                        "source": r["source"], "detail": r["detail"]}
+                            for r in cur.fetchall()}
+        except Exception:
+            conn.rollback()
+            data_updates = {}
+
+        # manually-provided weekly BOGO lists (richer than the scrape)
+        try:
+            cur.execute("""
+                SELECT week_label, week_date, strain, packs, bogos
+                FROM bogo_lists
+                ORDER BY week_date DESC NULLS LAST, week_label DESC, strain ASC
+            """)
+            bogo_lists = _serialize(cur.fetchall())
+        except Exception:
+            conn.rollback()
+            bogo_lists = []
 
     # ---- promo performance: avg daily revenue during vs baseline around it ----
     performance = _compute_performance(sales, promos)
@@ -152,6 +207,8 @@ def fetch_payload(days=800):
             "promos": promos, "performance": performance,
             "monthly": monthly, "campaigns": campaigns,
             "special_offers": special_offers,
+            "data_updates": data_updates,
+            "bogo_lists": bogo_lists,
             "competitor_state": competitor_state,
             "competitor_weeks": competitor_weeks}
 
