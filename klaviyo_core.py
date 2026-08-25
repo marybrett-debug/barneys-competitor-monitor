@@ -15,7 +15,7 @@ import re
 import json
 import urllib.request
 import urllib.error
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 
 import psycopg2
 
@@ -173,25 +173,61 @@ def derive_and_insert_promos(cur, conn, collected):
     existing = set((str(r[0]), (r[1] or "").strip().lower()) for r in existing_rows)
     curated_cutoff = max((str(r[0]) for r in existing_rows), default=None)
 
-    added = 0
+    # Build derived promo records first (so we can chain major ones end->next start).
+    derived = []
     for base, cluster in windows:
         dates = [c[0] for c in cluster]
         subjects = [c[1] for c in cluster]
         start = min(dates)
+        last_email = max(dates)
+        is_major, discount = _classify_promo(base, subjects)
+        derived.append({
+            "base": base, "start": start, "last_email": last_email,
+            "subjects": subjects, "is_major": is_major, "discount": discount,
+        })
+
+    # Sort major promos by start so each can end the day before the next major starts.
+    majors = sorted([d for d in derived if d["is_major"]], key=lambda d: d["start"])
+    today = datetime.now(timezone.utc).date()
+    for i, d in enumerate(majors):
+        if i + 1 < len(majors):
+            # ends the day before the next major sale begins
+            d["end"] = majors[i + 1]["start"] - timedelta(days=1)
+        else:
+            # newest major sale: active through today (runs until the next launches)
+            d["end"] = max(today, d["last_email"].date() if hasattr(d["last_email"], "date") else d["last_email"])
+
+    # Minor features get fixed windows by type (Strain of Week ~7d, Month ~30d, Year ~365d).
+    def _minor_window(base, subjects):
+        blob = (base + " " + " ".join(subjects)).upper()
+        if "YEAR" in blob:  # strain of the year
+            return 365
+        if "MONTH" in blob or "SOM" in blob:  # strain of the month
+            return 30
+        if "WEEK" in blob or "SOW" in blob:  # strain of the week
+            return 7
+        return 10  # new releases, bundles, misc
+    for d in derived:
+        if not d["is_major"]:
+            span = _minor_window(d["base"], d["subjects"])
+            d["end"] = d["start"] + timedelta(days=span)
+
+    added = 0
+    for d in derived:
+        start = d["start"]
         if curated_cutoff and start.isoformat() <= curated_cutoff:
             continue
-        end = max(dates) + timedelta(days=3)
-        is_major, discount = _classify_promo(base, subjects)
-        promo_name = base[:120]
+        end = d["end"]
+        promo_name = d["base"][:120]
         if (start.isoformat(), promo_name.strip().lower()) in existing:
             continue
-        notes = "Auto-derived from Klaviyo campaigns: " + "; ".join(s[:60] for s in subjects[:3])
+        notes = "Auto-derived from Klaviyo campaigns: " + "; ".join(s[:60] for s in d["subjects"][:3])
         try:
             cur.execute("""
                 INSERT INTO barneys_promos (start_date, end_date, promo_name, discount, notes, is_major)
                 VALUES (%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (start_date, promo_name) DO NOTHING
-            """, (start.isoformat(), end.isoformat(), promo_name, discount, notes, is_major))
+            """, (start.isoformat(), end.isoformat(), promo_name, d["discount"], notes, d["is_major"]))
             if cur.rowcount > 0:
                 added += 1
         except Exception:
