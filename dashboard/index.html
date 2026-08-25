@@ -84,7 +84,7 @@
     <h1>BARNEY'S FARM</h1>
     <p>Promo &amp; Sales Intelligence · Higher and Higher</p>
   </div>
-  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.10.0</span>
+  <span id="versionBadge" style="margin-left:auto;font-size:11px;color:#FFC93C;opacity:.8;font-family:monospace;align-self:flex-start">v1.10.1</span>
 </header>
 
 <div class="wrap">
@@ -1494,9 +1494,11 @@ function renderKPIs(){
   const lyRev=byMonth[lastYr];
   const momPct = prevRev? Math.round((curRev-prevRev)/prevRev*100):null;
   const yoyPct = lyRev? Math.round((curRev-lyRev)/lyRev*100):null;
-  // active promo today
+  // active promos today (there may be several — a main sale plus BOGO/SOW/etc.)
   const today=new Date().toISOString().slice(0,10);
-  const active=(DATA.promos||[]).find(p=> today>=dayOf(p.start_date) && today<=dayOf(p.end_date||p.start_date));
+  const activeList=(DATA.promos||[]).filter(p=> today>=dayOf(p.start_date) && today<=dayOf(p.end_date||p.start_date));
+  // sort majors first, then by most recent start
+  activeList.sort((a,b)=> (b.is_major?1:0)-(a.is_major?1:0) || dayOf(b.start_date).localeCompare(dayOf(a.start_date)));
   // best promo by lift
   const best=(DATA.performance||[]).filter(p=>p.lift_pct!=null).sort((a,b)=>b.lift_pct-a.lift_pct)[0];
   const monthName=new Date(cur+"-01").toLocaleString(undefined,{month:"short",year:"numeric"});
@@ -1513,7 +1515,16 @@ function renderKPIs(){
     cell(`${monthName} revenue`, fmtK(curRev), `${sales.filter(s=>dayOf(s.sale_date).slice(0,7)===cur).length} days so far`)+
     cell("vs last month", pctStr(momPct), prev?`${fmtK(prevRev)} in ${new Date(prev+"-01").toLocaleString(undefined,{month:"short"})}`:"—", pctColor(momPct))+
     cell("vs last year", pctStr(yoyPct), lyRev?`${fmtK(lyRev)} in ${new Date(lastYr+"-01").toLocaleString(undefined,{month:"short",year:"2-digit"})}`:"no data", pctColor(yoyPct))+
-    cell("Active promo", active?(active.promo_name.length>22?active.promo_name.slice(0,22)+"…":active.promo_name):"None", active&&active.discount?active.discount:(active?"running":"no promo today"), active?'var(--green)':'#888')+
+    cell("Active promo",
+      activeList.length? (activeList.length===1
+          ? (activeList[0].promo_name.length>22?activeList[0].promo_name.slice(0,22)+"…":activeList[0].promo_name)
+          : activeList.length+" active")
+        : "None",
+      activeList.length? (activeList.length===1
+          ? (activeList[0].discount||"running")
+          : activeList.map(p=>p.promo_name.length>18?p.promo_name.slice(0,18)+"…":p.promo_name).join(" · "))
+        : "no promo today",
+      activeList.length?'var(--green)':'#888')+
     cell("Best promo ever", best?('+'+best.lift_pct+'%'):"—", best?(best.promo_name.length>24?best.promo_name.slice(0,24)+"…":best.promo_name):"", 'var(--green)');
 }
 
