@@ -235,6 +235,7 @@
       <button class="tab" data-otab="changes">Changes</button>
       <button class="tab" data-otab="history">History</button>
       <button class="tab" data-otab="bogo">BOGO Lists</button>
+      <button class="tab" data-otab="results">BOGO Results</button>
     </div>
 
     <!-- THIS WEEK -->
@@ -308,7 +309,35 @@
       </table>
     </div>
 
-    <div class="legend"><b>Auto-updates twice a week:</b> Wednesday ~1am PT (end of the current offer cycle) and Saturday ~1am PT (fresh offers after the Thursday/Friday refresh), scraped from barneysfarm.com/us/special-offer-seeds. Each run adds a dated snapshot. <b>This Week</b> = current offers · <b>Changes</b> = what moved since the previous snapshot · <b>History</b> = discounting patterns over time · <b>BOGO Lists</b> = your pasted weekly BOGO data (multiple pack tiers per strain).</div>
+    <div id="otResults" style="display:none">
+      <div class="controls" style="flex-wrap:wrap;gap:10px;margin-bottom:10px">
+        <input type="file" id="strainFile" accept=".csv,.xlsx,.xlsm" style="display:none"/>
+        <button id="strainImportBtn" class="rhythm-btn" onclick="document.getElementById('strainFile').click()">⬆ Upload pack sizes sold</button>
+        <span id="strainStatus" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
+        <div style="flex:1 1 240px;min-width:220px">
+          <label style="font-size:12px">Strains on offer<br>
+            <select id="brList" style="padding:5px 9px;border-radius:6px;border:1px solid var(--line);font-size:13px;margin:4px 0;width:100%"></select></label>
+          <textarea id="brStrains" rows="9" placeholder="One strain per line" style="width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;font-family:ui-monospace,monospace"></textarea>
+        </div>
+        <div style="flex:1 1 240px;display:flex;flex-direction:column;gap:8px">
+          <label style="font-size:12px">Discount started<br><input id="brStart" type="date" style="padding:6px 9px;border:1px solid var(--line);border-radius:6px;font-size:13px"></label>
+          <label style="font-size:12px">Change to measure (e.g. moved off the category page)<br><input id="brChange" type="date" style="padding:6px 9px;border:1px solid var(--line);border-radius:6px;font-size:13px"></label>
+          <button id="brRunBtn" class="rhythm-btn" style="background:var(--green);color:#fff;border-color:var(--green);align-self:flex-start">Compare</button>
+          <div id="brPeriods" class="legend"></div>
+        </div>
+      </div>
+      <div id="brSummary" style="margin-top:14px"></div>
+      <div class="controls" style="margin-top:10px">
+        <span style="flex:1"></span>
+        <button id="brExportBtn" class="rhythm-btn">⬇ Export CSV</button>
+      </div>
+      <table id="brTable"><thead></thead><tbody></tbody></table>
+      <div class="legend"><b>Before</b> = the 4 weeks before the discount started · <b>During</b> = discount start to the day before the change · <b>After</b> = the change date to the last full day uploaded. Figures are per day so periods of different lengths compare fairly. Upload the admin's <b>Retail pack sizes sold</b> report (Excel or CSV); re-uploading dates replaces them.</div>
+    </div>
+
+    <div class="legend"><b>Auto-updates twice a week:</b> Wednesday ~1am PT (end of the current offer cycle) and Saturday ~1am PT (fresh offers after the Thursday/Friday refresh), scraped from barneysfarm.com/us/special-offer-seeds. Each run adds a dated snapshot. <b>This Week</b> = current offers · <b>Changes</b> = what moved since the previous snapshot · <b>History</b> = discounting patterns over time · <b>BOGO Lists</b> = your pasted weekly BOGO data (multiple pack tiers per strain) · <b>BOGO Results</b> = sales of the strains on offer before, during and after a change.</div>
   </div>
 
   </div><!-- /tabOwn -->
@@ -934,7 +963,9 @@ function setOfferTab(tab){
   document.getElementById("otChanges").style.display = tab==="changes"?"block":"none";
   document.getElementById("otHistory").style.display = tab==="history"?"block":"none";
   document.getElementById("otBogo").style.display = tab==="bogo"?"block":"none";
+  document.getElementById("otResults").style.display = tab==="results"?"block":"none";
   if(tab==="bogo") renderBogo();
+  if(tab==="results") renderBogoResults();
 }
 
 let bogoTierFilter="all";
@@ -1036,6 +1067,141 @@ async function saveBogo(){
       status.style.color="var(--green)"; }
     else { status.textContent="Error: "+(j.error||"could not save"); status.style.color="#d9534f"; }
   }catch(e){ status.textContent="Error: "+e.message; status.style.color="#d9534f"; }
+}
+
+// ---- BOGO Results: per-strain sales before / during / after a change ----
+// Mark's "BOGO 10+10 WITH LABELS LIST USA" (1 Oct 2026), used until a list is pasted or picked
+const DEFAULT_BOGO_LIST={label:"BOGO 10+10 · 1 Oct 2026", start:"2026-10-01", change:"2026-10-16", strains:[
+  "Black Cherry Gushers","Bubblegum Gelato","Cookie Casket","Insane OG","Lemon Cherry Gelato","LFG","Papaya Frosting",
+  "RS11 x Banana OG","Acapulco Gold","Blue Dream","Bruce Banner","Cherry Poppers","Jelly Cake","LSD","Mimosa x Orange Punch",
+  "Pineapple Chunk","Super Boof","Tropicana Cherry","Zillions","Blue Gelato 41","Critical Kush","Durban Poison",
+  "Frosted Zinn x 3 Bears OG Auto","Frosted Zinn x Cookie Dog Auto","Gorilla Zkittlez","Laughing Buddha","London Pound Cake",
+  "London Pound Cake Auto","MAC 1","Mimosa EVO","Mimosa x Orange Punch Auto","Pineapple Express","Pineapple Express Auto",
+  "Runtz Auto","Runtz x Layer Cake"]};
+let SS_META=null, BR_ROWS=[], BR_WIRED=false;
+const brNorm=s=>(s||"").toLowerCase().replace(/\s+f1$/,"").replace(/\s+/g," ").trim();
+const brDay=(d,n)=>{ const t=new Date(d+"T00:00:00Z"); t.setUTCDate(t.getUTCDate()+n); return t.toISOString().slice(0,10); };
+const brDays=(a,b)=>Math.round((Date.parse(b)-Date.parse(a))/864e5)+1;
+function brStore(k,v){ try{ v===undefined?localStorage.removeItem(k):localStorage.setItem(k,v); }catch(_){} }
+function brLoad(k){ try{ return localStorage.getItem(k); }catch(_){ return null; } }
+
+async function renderBogoResults(){
+  if(!BR_WIRED) wireBogoResults();
+  const status=document.getElementById("strainStatus");
+  try{
+    const r=await fetch("/api/strain-sales"); const d=await r.json();
+    if(d.error) throw new Error(d.error);
+    SS_META=d;
+    status.style.color="var(--muted)";
+    status.textContent=d.last?`Strain sales loaded: ${d.first} to ${d.last}`:"No strain sales yet. Upload the Retail pack sizes sold report.";
+    if(d.last) runBogoResults();
+  }catch(e){ status.style.color="#d9534f"; status.textContent="✕ "+e.message; }
+}
+
+function wireBogoResults(){
+  BR_WIRED=true;
+  const sel=document.getElementById("brList"), ta=document.getElementById("brStrains");
+  const byWeek=bogoWeeks();
+  const weeks=Object.keys(byWeek).sort((a,b)=>(byWeek[b].date||"").localeCompare(byWeek[a].date||"")||b.localeCompare(a));
+  sel.innerHTML=`<option value="__default">${DEFAULT_BOGO_LIST.label} (${DEFAULT_BOGO_LIST.strains.length})</option>`+
+    weeks.map(w=>`<option value="${w}">${w}${byWeek[w].date?" · "+byWeek[w].date:""} (${byWeek[w].rows.length})</option>`).join("")+
+    `<option value="__custom">My own list</option>`;
+  const pick=(v,keepDates)=>{
+    if(v==="__default"){ ta.value=DEFAULT_BOGO_LIST.strains.join("\n");
+      if(!keepDates){ document.getElementById("brStart").value=DEFAULT_BOGO_LIST.start; document.getElementById("brChange").value=DEFAULT_BOGO_LIST.change; } }
+    else if(v==="__custom"){ ta.value=brLoad("brCustom")||""; }
+    else if(byWeek[v]){ ta.value=byWeek[v].rows.map(r=>r.strain).join("\n");
+      if(!keepDates && byWeek[v].date) document.getElementById("brStart").value=byWeek[v].date; }
+  };
+  const saved=brLoad("brList");
+  sel.value=saved && [...sel.options].some(o=>o.value===saved)?saved:"__default";
+  pick(sel.value,false);
+  if(brLoad("brStart")) document.getElementById("brStart").value=brLoad("brStart");
+  if(brLoad("brChange")) document.getElementById("brChange").value=brLoad("brChange");
+  sel.onchange=()=>{ brStore("brList",sel.value); pick(sel.value,false); runBogoResults(); };
+  ta.oninput=()=>{ if(sel.value!=="__custom"){ sel.value="__custom"; brStore("brList","__custom"); } brStore("brCustom",ta.value); };
+  document.getElementById("brRunBtn").onclick=()=>{
+    brStore("brStart",document.getElementById("brStart").value);
+    brStore("brChange",document.getElementById("brChange").value);
+    runBogoResults();
+  };
+  document.getElementById("brExportBtn").onclick=exportBogoResults;
+  const input=document.getElementById("strainFile"), status=document.getElementById("strainStatus"), btn=document.getElementById("strainImportBtn");
+  input.onchange=async()=>{
+    const file=input.files[0]; if(!file) return;
+    btn.disabled=true; status.style.color="var(--muted)"; status.textContent=`Uploading ${file.name}…`;
+    try{
+      const fd=new FormData(); fd.append("file", file);
+      const r=await fetch("/api/strain-sales",{method:"POST",body:fd});
+      const txt=await r.text();
+      let d; try{ d=JSON.parse(txt); }catch(_){ d={error:(txt||"").slice(0,200)||("HTTP "+r.status)}; }
+      if(!r.ok||d.error) throw new Error(d.error||("HTTP "+r.status));
+      await renderBogoResults();
+      status.style.color="var(--green)";
+      status.textContent=`✓ Imported ${d.days} days (${d.range}). `+status.textContent;
+    }catch(e){ status.style.color="#d9534f"; status.textContent="✕ "+e.message; }
+    btn.disabled=false; input.value="";
+  };
+}
+
+function brPeriods(){
+  const start=document.getElementById("brStart").value, change=document.getElementById("brChange").value;
+  if(!start||!change||!SS_META||!SS_META.last) return null;
+  // the newest day in an export is usually only part of a day, so stop the day before it
+  const lastFull=brDay(SS_META.last,-1);
+  return [
+    {key:"before", label:"Before", from:brDay(start,-28), to:brDay(start,-1)},
+    {key:"during", label:"During", from:start, to:brDay(change,-1)},
+    {key:"after",  label:"After",  from:change, to:lastFull},
+  ].filter(p=>p.from<=p.to);
+}
+
+async function runBogoResults(){
+  const P=brPeriods(); const sum=document.getElementById("brSummary");
+  const strains=document.getElementById("brStrains").value.split(/\n/).map(s=>s.trim()).filter(Boolean);
+  if(!P||!strains.length){ sum.innerHTML=`<div class=muted>Pick a list of strains and both dates, then Compare.</div>`; return; }
+  document.getElementById("brPeriods").innerHTML=P.map(p=>`<b>${p.label}</b> ${p.from} → ${p.to} (${brDays(p.from,p.to)} days)`).join("<br>");
+  sum.innerHTML=`<div class=muted>Loading…</div>`;
+  const r=await fetch(`/api/strain-sales?from=${P[0].from}&to=${P[P.length-1].to}`); const d=await r.json();
+  if(d.error){ sum.innerHTML=`<div style="color:#d9534f">✕ ${d.error}</div>`; return; }
+  const want=new Map(strains.map(s=>[brNorm(s),s]));
+  const grp=P.map(()=>({list:0,packs:0,p10:0,other:0}));
+  const per=new Map(strains.map(s=>[s,P.map(()=>({t:0,p10:0}))]));
+  const seen=new Set();
+  d.rows.forEach(([day,name,total,packs,p10])=>{
+    const i=P.findIndex(p=>day>=p.from&&day<=p.to); if(i<0) return;
+    const hit=want.get(brNorm(name));
+    if(hit){ seen.add(hit); grp[i].list+=total; grp[i].packs+=packs; grp[i].p10+=p10; per.get(hit)[i].t+=total; per.get(hit)[i].p10+=p10; }
+    else grp[i].other+=total;
+  });
+  const n=P.map(p=>brDays(p.from,p.to));
+  const pct=(a,b)=>b?((a/b-1)*100):null;
+  const pctCell=v=>v==null?"<span class=muted>—</span>":`<span style="color:${v<0?"#c62828":"var(--green)"};font-weight:600">${v>0?"+":""}${v.toFixed(0)}%</span>`;
+  const iD=P.findIndex(p=>p.key==="during"), iA=P.findIndex(p=>p.key==="after");
+  let verdict="";
+  if(iD>=0&&iA>=0){
+    const ch=pct(grp[iA].list/n[iA], grp[iD].list/n[iD]), oth=pct(grp[iA].other/n[iA], grp[iD].other/n[iD]);
+    verdict=`<div style="font-size:15px;margin:4px 0 10px">Since ${P[iA].from}, these strains are selling <b style="color:${ch<0?"#c62828":"var(--green)"}">${ch>0?"+":""}${ch.toFixed(0)}%</b> per day vs the discount period, while all other seeds moved ${oth>0?"+":""}${oth.toFixed(0)}%.`+
+      (n[iA]<7?` <span class=muted>Only ${n[iA]} day${n[iA]===1?"":"s"} of data after the change so far.</span>`:"")+`</div>`;
+  }
+  sum.innerHTML=verdict+`<table><thead><tr><th>Period</th><th>Days</th><th>List $/day</th><th>Packs/day</th><th>10-packs/day</th><th>Other seeds $/day</th><th>List share</th></tr></thead><tbody>`+
+    P.map((p,i)=>`<tr><td><b>${p.label}</b> <span class=muted>${p.from} → ${p.to}</span></td><td>${n[i]}</td><td><b>${fmtK(grp[i].list/n[i])}</b></td><td>${(grp[i].packs/n[i]).toFixed(1)}</td><td>${(grp[i].p10/n[i]).toFixed(1)}</td><td>${fmtK(grp[i].other/n[i])}</td><td>${grp[i].list+grp[i].other?(grp[i].list/(grp[i].list+grp[i].other)*100).toFixed(1)+"%":"—"}</td></tr>`).join("")+
+    `</tbody></table>`+
+    (strains.length>seen.size?`<div class=legend>No sales found for: ${strains.filter(s=>!seen.has(s)).join(", ")}. Check the spelling matches the admin's product name.</div>`:"");
+  BR_ROWS=strains.map(s=>({strain:s, v:per.get(s).map((x,i)=>({t:x.t/n[i], p10:x.p10/n[i]}))}));
+  const k=iD>=0?iD:0;
+  BR_ROWS.sort((a,b)=>b.v[k].t-a.v[k].t);
+  document.querySelector("#brTable thead").innerHTML=`<tr><th>Strain</th>${P.map(p=>`<th>${p.label} $/day</th>`).join("")}${P.map(p=>`<th>${p.label} 10-packs/day</th>`).join("")}${iD>=0&&iA>=0?"<th>After vs during</th>":""}</tr>`;
+  document.querySelector("#brTable tbody").innerHTML=BR_ROWS.map(r=>`<tr><td><b>${r.strain}</b></td>${r.v.map(x=>`<td>${fmtK(x.t)}</td>`).join("")}${r.v.map(x=>`<td>${x.p10.toFixed(1)}</td>`).join("")}${iD>=0&&iA>=0?`<td>${pctCell(pct(r.v[iA].t,r.v[iD].t))}</td>`:""}</tr>`).join("");
+  BR_ROWS.periods=P;
+}
+
+function exportBogoResults(){
+  const P=BR_ROWS.periods; if(!P) return;
+  const lines=[["Strain",...P.map(p=>`${p.label} ${p.from} to ${p.to} $/day`),...P.map(p=>`${p.label} 10-packs/day`)].join(",")];
+  BR_ROWS.forEach(r=>lines.push([/[",]/.test(r.strain)?'"'+r.strain.replace(/"/g,'""')+'"':r.strain,...r.v.map(x=>x.t.toFixed(2)),...r.v.map(x=>x.p10.toFixed(2))].join(",")));
+  const url=URL.createObjectURL(new Blob([lines.join("\n")],{type:"text/csv"}));
+  const a=document.createElement("a"); a.href=url; a.download="bogo_results.csv"; a.click(); URL.revokeObjectURL(url);
 }
 
 const COMP_FIELDS=[
