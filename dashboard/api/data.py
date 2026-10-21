@@ -158,6 +158,18 @@ def fetch_payload(days=800):
             conn.rollback()
             data_updates = {}
 
+        # manually-provided weekly BOGO lists (richer than the scrape)
+        try:
+            cur.execute("""
+                SELECT week_label, week_date, strain, packs, bogos
+                FROM bogo_lists
+                ORDER BY week_date DESC NULLS LAST, week_label DESC, strain ASC
+            """)
+            bogo_lists = _serialize(cur.fetchall())
+        except Exception:
+            conn.rollback()
+            bogo_lists = []
+
     # ---- promo performance: avg daily revenue during vs baseline around it ----
     performance = _compute_performance(sales, promos)
     _attach_engagement(performance, campaigns)
@@ -176,6 +188,7 @@ def fetch_payload(days=800):
             "monthly": monthly, "campaigns": campaigns,
             "special_offers": special_offers,
             "data_updates": data_updates,
+            "bogo_lists": bogo_lists,
             "competitor_state": competitor_state,
             "competitor_weeks": competitor_weeks}
 
