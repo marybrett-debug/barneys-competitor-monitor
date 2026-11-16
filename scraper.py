@@ -14,6 +14,7 @@ scraping. The full raw_text is also stored so the weekly diff can catch changes
 we didn't explicitly parse.
 """
 import re
+import json
 import hashlib
 from playwright.sync_api import sync_playwright
 
@@ -27,7 +28,11 @@ COMPETITORS = {
     "Barney's Farm": {
         "url": "https://www.barneysfarm.com/special-offer-seeds",
         "signals": ["off", "free", "seeds", "%"],
-        "new_url": "https://www.barneysfarm.com/new-cannabis-seeds",
+        # The old /new-cannabis-seeds page was removed in the site rebuild (404 since Nov 2026).
+        "new_url": "https://www.barneysfarm.com/us/new-marijuana-weed-strains",
+        # Product links there (/us/<name>-weed-strain-817) don't match the link heuristic; read the page's
+        # structured product list instead.
+        "new_from_structured_data": True,
         "is_us": True,   # our own site — pinned to the top of the report
     },
     "ILGM": {
@@ -236,8 +241,8 @@ def scrape_all():
 
 # ---- Medium-tier scraping: product launches + prices ------------------------
 
-def _fetch_text_and_links(url, browser):
-    """Load a page and return (visible_text, [(anchor_text, href), ...])."""
+def _fetch_text_and_links(url, browser, want_html=False):
+    """Load a page and return (visible_text, [(anchor_text, href), ...]), plus the page HTML when want_html."""
     page = browser.new_page(
         user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -248,9 +253,42 @@ def _fetch_text_and_links(url, browser):
         text = page.inner_text("body")
         links = page.eval_on_selector_all(
             "a", "els => els.map(e => [e.innerText.trim(), e.href])")
+        html = page.content() if want_html else None
     finally:
         page.close()
-    return text, links
+    return (text, links, html) if want_html else (text, links)
+
+
+def _names_from_structured_data(html):
+    """Product names from the page's schema.org data (<script type="application/ld+json">), in page order.
+    Shops publish this for Google, so it survives layout changes that break link-based parsing."""
+    names = []
+
+    def walk(node):
+        if isinstance(node, list):
+            for x in node:
+                walk(x)
+        elif isinstance(node, dict):
+            kind = node.get("@type")
+            kinds = kind if isinstance(kind, list) else [kind]
+            if "Product" in kinds and isinstance(node.get("name"), str):
+                names.append(node["name"])
+            for k in ("@graph", "itemListElement", "item", "mainEntity"):
+                if k in node:
+                    walk(node[k])
+
+    for block in re.findall(r'<script[^>]+application/ld\+json[^>]*>(.*?)</script>', html or "", flags=re.S | re.I):
+        try:
+            walk(json.loads(block))
+        except ValueError:
+            continue
+    seen, out = set(), []
+    for n in names:
+        n = _clean(n)
+        if n and n.lower() not in seen:
+            seen.add(n.lower())
+            out.append(n)
+    return out
 
 
 def scrape_new_products(name, cfg):
@@ -263,12 +301,17 @@ def scrape_new_products(name, cfg):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
         try:
-            text, links = _fetch_text_and_links(new_url, browser)
+            text, links, html = _fetch_text_and_links(new_url, browser, want_html=True)
         except Exception as e:
             browser.close()
             return [], "error", f"new-products fetch failed: {e}"
         browser.close()
 
+    if cfg.get("new_from_structured_data"):
+        names = _names_from_structured_data(html)
+        if names:
+            return names[:60], "ok", ""
+        return [], "warning", "no products in the page's structured data (page layout may have changed)"
     names = []
     seen = set()
     for anchor, href in links:
